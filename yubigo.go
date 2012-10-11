@@ -196,7 +196,7 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 		paramString = paramString + "&h=" + signature
 	}
 
-	// loop through server list (automatic failover)
+	// loop through server list (simple but effective api server failover)
 	for _, apiServer := range ya.apiServerList {
 
 		url := ya.protocol + apiServer + "?" + paramString
@@ -273,116 +273,37 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 			return nil, false, errors.New("Could not validate nonce value from server response.")
 		}
 
-		if true {
-			log.Println("Done?")
-			break
+		// check attached signature with remake of that signature, if key is actually in use.
+		if len(ya.key) > 0 {
+			receivedSignature, ok := yr.parameters["h"]
+			if !ok || len(receivedSignature) == 0 {
+				return nil, false, errors.New("No signature hash was attached by the api server, we do expect one though. This might be a hacking attempt.")
+			}
+
+			// create a slice with the same size-1 as the parameters map (we're leaving the hash itself out of it's replica calculation)
+			receivedValuesSlice := make([]string, 0, len(yr.parameters)-1)
+			for key, value := range yr.parameters {
+				if key != "h" {
+					receivedValuesSlice = append(receivedValuesSlice, key+"="+value)
+				}
+			}
+			sort.Strings(receivedValuesSlice)
+			receivedValuesString := strings.Join(receivedValuesSlice, "&")
+			hmacenc := hmac.New(sha1.New, ya.key)
+			_, err := hmacenc.Write([]byte(receivedValuesString))
+			if err != nil {
+				return nil, false, errors.New(fmt.Sprintf("Could not calculate signature replica. Error: %s\n", err))
+			}
+			recievedSignatureReplica := base64.StdEncoding.EncodeToString(hmacenc.Sum([]byte{}))
+
+			if receivedSignature != recievedSignatureReplica {
+				return nil, false, errors.New("The received signature hash is not valid. This might be a hacking attempt.")
+			}
 		}
 
+		// we're done!
+		break
 	}
-
-	// if (preg_match("/status=([a-zA-Z0-9_]+)/", $str, $out)) {
-	// $status = $out[1];
-
-	// /*
-	// * There are 3 cases.
-	// *
-	// * 1. OTP or Nonce values does not match - ignore
-	// * response.
-	// *
-	// * 2. We have a HMAC key. If signature is invalid -
-	// * ignore response. Return if status=OK or
-	// * status=REPLAYED_OTP.
-	// *
-	// * 3. Return if status=OK or status=REPLAYED_OTP.
-	// */
-
-	// if (!preg_match("/otp=".$params['otp']."/", $str) ||
-	// !preg_match("/nonce=".$params['nonce']."/", $str)) {
-	// /* Case 1. Ignore response. */
-	// }
-	// elseif ($this->_key <> "") {
-	// /* Case 2. Verify signature first */
-	// $rows = explode("\r\n", trim($str));
-	// $response=array();
-	// while (list($key, $val) = each($rows)) {
-	// /* = is also used in BASE64 encoding so we only replace the first = by # which is not used in BASE64 */
-	// $val = preg_replace('/=/', '#', $val, 1);
-	// $row = explode("#", $val);
-	// $response[$row[0]] = $row[1];
-	// }
-
-	// $parameters=array('nonce','otp', 'sessioncounter', 'sessionuse', 'sl', 'status', 't', 'timeout', 'timestamp');
-	// sort($parameters);
-	// $check=Null;
-	// foreach ($parameters as $param) {
-	// if (array_key_exists($param, $response)) {
-	// if ($check) $check = $check . '&';
-	// $check = $check . $param . '=' . $response[$param];
-	// }
-	// }
-
-	// $checksignature =
-	// base64_encode(hash_hmac('sha1', utf8_encode($check),
-	// $this->_key, true));
-
-	// if($response['h'] == $checksignature) {
-	// if ($status == 'REPLAYED_OTP') {
-	// if (!$wait_for_all) { $this->_response = $str; }
-	// $replay=True;
-	// }
-	// if ($status == 'OK') {
-	// if (!$wait_for_all) { $this->_response = $str; }
-	// $valid=True;
-	// }
-	// }
-	// } else {
-	// /* Case 3. We check the status directly */
-	// if ($status == 'REPLAYED_OTP') {
-	// if (!$wait_for_all) { $this->_response = $str; }
-	// $replay=True;
-	// }
-	// if ($status == 'OK') {
-	// if (!$wait_for_all) { $this->_response = $str; }
-	// $valid=True;
-	// }
-	// }
-	// }
-	// if (!$wait_for_all && ($valid || $replay))
-	// {
-	// /* We have status=OK or status=REPLAYED_OTP, return. */
-	// foreach ($ch as $h) {
-	// curl_multi_remove_handle($mh, $h);
-	// curl_close($h);
-	// }
-	// curl_multi_close($mh);
-	// if ($replay) return PEAR::raiseError('REPLAYED_OTP');
-	// if ($valid) return true;
-	// return PEAR::raiseError($status);
-	// }
-
-	// curl_multi_remove_handle($mh, $info['handle']);
-	// curl_close($info['handle']);
-	// unset ($ch[$info['handle']]);
-	// }
-	// curl_multi_select($mh);
-	// }
-	// } while ($active);
-
-	// /* Typically this is only reached for wait_for_all=true or
-	// * when the timeout is reached and there is no
-	// * OK/REPLAYED_REQUEST answer (think firewall).
-	// */
-
-	// foreach ($ch as $h) {
-	// curl_multi_remove_handle ($mh, $h);
-	// curl_close ($h);
-	// }
-	// curl_multi_close ($mh);
-
-	// if ($replay) return PEAR::raiseError('REPLAYED_OTP');
-	// if ($valid) return true;
-	// return PEAR::raiseError('NO_VALID_ANSWER');
-	// }
 
 	return nil, false, errors.New("None of the api servers responded. Could not verify OTP")
 }
