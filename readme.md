@@ -25,31 +25,26 @@ Make sure to import the package: `import "github.com/GeertJohan/yubigo"`
 
 Basic OTP checking usage:
 ```go
-// have your id and key ready
-id := "1234"
-key := "fdsaffqaf4vrc2q3cds="
 
-// get an otp from some input field
-otp := "your otp value"
-
-// create a new yubiAuth instance
-yubiAuth, err := yubigo.NewYubiAuth(id, key)
+// create a new yubiAuth instance with id and key
+yubiAuth, err := yubigo.NewYubiAuth("1234", "fdsaffqaf4vrc2q3cds=")
 if err != nil {
 	// probably an invalid key was given
 	log.Fatalln(err)
 }
 
+
 // verify an OTP value
-result, ok, err := yubiAuth.Verify(otp)
+result, ok, err := yubiAuth.Verify("ccccccbetgjevivbklihljgtbenbfrefccveiglnjfbc")
 if err != nil {
 	log.Fatalln(err)
 }
 
 if ok {
-	// succes!! The otp is valid!
+	// succes!! The OTP is valid!
 	// use result.GetParameter("key") to inspect the data sent by the api server.
 } else {
-	// fail! The otp is invalid or has been used before.
+	// fail! The OTP is invalid or has been used before.
 }
 ```
 
