@@ -1,4 +1,4 @@
-package main
+package yubigo
 
 import (
 	"bufio"
@@ -335,29 +335,4 @@ func (yr *yubiResponse) GetQuery() string {
 func (yr *yubiResponse) GetParameter(key string) (value string, ok bool) {
 	value, ok = yr.parameters[key]
 	return
-}
-
-func main() {
-	id := "9363"
-	key := "7Anl+jXfPuBI+jPixmxxkxKKrX8="
-	otp := "ccccccbfbcnbbdtughnfehfeufeclkjididdljjknndf"
-	a, b, err := ParseOTP(otp)
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Println(a)
-	fmt.Println(b)
-
-	ya, err := NewYubiAuth(id, key)
-	if err != nil {
-		log.Println("main err: ", err)
-	}
-	res, ok, err := ya.Verify(otp)
-	if err != nil {
-		log.Println("main err: ", err)
-	}
-	if ok {
-		log.Println("main is ok!")
-		log.Println(res)
-	}
 }
