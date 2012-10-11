@@ -1,7 +1,7 @@
 
 ## yubigo
 
-The Yubigo authentication Go package provides an easy way to integrate the Yubico Yubikey into your existing Go-based user authentication infrastructure. 
+The Yubigo authentication Go package/library provides an easy way to integrate the Yubico Yubikey into your existing Go-based user authentication infrastructure.
 
 ### Status and Roadmap
 
@@ -23,7 +23,8 @@ Installation is simple. Use go get:
 
 Make sure to import the package: `import "github.com/GeertJohan/yubigo"`
 
-Basic OTP checking usage:
+
+**Basic OTP checking usage:**
 ```go
 
 // create a new yubiAuth instance with id and key
@@ -50,19 +51,22 @@ if ok {
 }
 ```
 
-Do not verify HTTPS certificate:
+
+**Do not verify HTTPS certificate:**
 ```go
 // Disable HTTPS cert verification. Use true to enable again.
 yubiAuth.VerifyHttps(false)
 ```
 
-HTTP instead of HTTPS:
+
+**HTTP instead of HTTPS:**
 ```go
 // Disable HTTPS. Use true to enable again.
 yubiAuth.UseHttps(false)
 ```
 
-Custom API server:
+
+**Custom API server:**
 ```go
 // Set a list of n servers, each server as host + path. 
 // Do not prepend with protocol
