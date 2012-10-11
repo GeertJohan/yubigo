@@ -7,7 +7,7 @@ The Yubigo authentication Go package provides an easy way to integrate the Yubic
 
 This package is very young and lacks automated tests and documentation. Development is high.
 
-At this moment there is **no guarantee** on the stability. Although this package is already being used in a production environment.
+At this moment there is **no guarantee** regarding the stability of this package. Although this package is already being used in a production environment.
 Everything is subject to change.
 
 Development is co-ordinated via this github repository. If you made an improvement, please request for pull!
