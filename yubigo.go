@@ -3,8 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
+	"math/rand"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 )
 
 var (
@@ -106,32 +110,61 @@ func (ya *yubiAuth) resetNextUrl() {
 }
 
 func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
-	/* Construct parameters string */
-	// $ret = $this->parsePasswordOTP($token);
-	// if (!$ret) {
-	// return PEAR::raiseError('Could not parse Yubikey OTP');
-	// }
-	// $params = array('id'=>$this->_id,
-	// 'otp'=>$ret['otp'],
-	// 'nonce'=>md5(uniqid(rand())));
-	// /* Take care of protocol version 2 parameters */
-	// if ($use_timestamp) $params['timestamp'] = 1;
-	// if ($sl) $params['sl'] = $sl;
-	// if ($timeout) $params['timeout'] = $timeout;
-	// ksort($params);
-	// $parameters = '';
-	// foreach($params as $p=>$v) $parameters .= "&" . $p . "=" . $v;
-	// $parameters = ltrim($parameters, "&");
+	// check and parse the otp
+	prefix, ciphertext, err := ParseOTP(otp)
+	if err != nil {
+		return nil, false, err
+	}
+	log.Printf("prefix: %s\n", prefix)
+	log.Printf("ciphertext: %s\n", ciphertext)
 
-	// /* Generate signature. */
-	// if($this->_key <> "") {
-	// $signature = base64_encode(hash_hmac('sha1', $parameters,
-	// $this->_key, true));
-	// $signature = preg_replace('/\+/', '%2B', $signature);
-	// $parameters .= '&h=' . $signature;
-	// }
+	// create map to store parameters for this verification request
+	params := make(map[string]string)
+	params["id"] = ya.id
+	params["otp"] = otp
 
-	// /* Generate and prepare request. */
+	// Create 40 characters nonce
+	rand.Seed(time.Now().UnixNano())
+	k := make([]rune, 40)
+	for i := 0; i < 40; i++ {
+		c := rand.Intn(35)
+		if c < 10 {
+			c += 48 // numbers (0-9) (0+48 == 48 == '0', 9+48 == 57 == '9')
+		} else {
+			c += 87 // lower case alphabets (a-z) (10+87 == 97 == 'a', 35+87 == 122 = 'z')
+		}
+		k[i] = rune(c)
+	}
+	params["nonce"] = string(k)
+
+	// hardcoded in the library for now.
+	//++ TODO(GeertJohan): add these values to the yubiAuth object and create getters/setters
+	params["timestamp"] = "1"
+	params["sl"] = "secure"
+	//params["timeout"] = ""
+
+	// create slice from map containing key=value
+	//++?? Why use a map anyway? Maybe just use slice for the complere process..
+	paramSlice := make([]string, 0, len(params))
+	for key, value := range params {
+		paramSlice = append(paramSlice, key+"="+value)
+	}
+
+	// sort the slice
+	paramSlice = sort.StringSlice(paramSlice)
+
+	// Create parameter string
+	paramString := strings.Join(paramSlice, "&")
+	log.Printf("paramString: %s\n", paramString)
+
+	/* Generate signature. */
+	if ya.key != "" {
+		// $signature = base64_encode(hash_hmac('sha1', $parameters, $this->_key, true));
+		// $signature = preg_replace('/\+/', '%2B', $signature);
+		// $parameters .= '&h=' . $signature;
+	}
+
+	/* Generate and prepare request. */
 	// $this->_lastquery=null;
 	// $this->URLreset();
 	// $mh = curl_multi_init();
@@ -191,6 +224,7 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 	// if (preg_match("/status=([a-zA-Z0-9_]+)/", $str, $out)) {
 	// $status = $out[1];
 
+	// /*
 	// * There are 3 cases.
 	// *
 	// * 1. OTP or Nonce values doesn't match - ignore
@@ -201,6 +235,7 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 	// * status=REPLAYED_OTP.
 	// *
 	// * 3. Return if status=OK or status=REPLAYED_OTP.
+	// */
 
 	// if (!preg_match("/otp=".$params['otp']."/", $str) ||
 	// !preg_match("/nonce=".$params['nonce']."/", $str)) {
