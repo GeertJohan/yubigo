@@ -216,6 +216,7 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 
 		bodyReader := bufio.NewReader(result.Body)
 		yr := NewYubiResponse()
+		yr.query = paramString
 		for {
 			// read through the response lines
 			line, err := bodyReader.ReadString('\n')
@@ -241,23 +242,23 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 		if !ok || status != "OK" {
 			switch status {
 			case "BAD_OTP":
-				return nil, false, nil
+				return yr, false, nil
 			case "REPLAYED_OTP":
-				return nil, false, nil
+				return yr, false, nil
 			case "BAD_SIGNATURE":
-				return nil, false, errors.New("Signature verification at the api server failed. The used id/key combination could be invalid or is not activated (yet).")
+				return yr, false, errors.New("Signature verification at the api server failed. The used id/key combination could be invalid or is not activated (yet).")
 			case "NO_SUCH_CLIENT":
-				return nil, false, errors.New("The api server does not accept the given id. It might be invalid or is not activated (yet).")
+				return yr, false, errors.New("The api server does not accept the given id. It might be invalid or is not activated (yet).")
 			case "OPERATION_NOT_ALLOWED":
-				return nil, false, errors.New("The api server does not allow the given api id to verify OTPs.")
+				return yr, false, errors.New("The api server does not allow the given api id to verify OTPs.")
 			case "BACKEND_ERROR":
-				return nil, false, errors.New("The api server seems to be broken. Please contact the api servers system administration (yubico servers? contact yubico).")
+				return yr, false, errors.New("The api server seems to be broken. Please contact the api servers system administration (yubico servers? contact yubico).")
 			case "NOT_ENOUGH_ANSWERS":
-				return nil, false, errors.New("The api server could not get requested number of syncs during before timeout")
+				return yr, false, errors.New("The api server could not get requested number of syncs during before timeout")
 			case "REPLAYED_REQUEST":
-				return nil, false, errors.New("The api server has seen this unique request before. If you receive this error, you might be the victim of a man-in-the-middle attack.")
+				return yr, false, errors.New("The api server has seen this unique request before. If you receive this error, you might be the victim of a man-in-the-middle attack.")
 			default:
-				return nil, false, errors.New(fmt.Sprintf("Unknown status parameter (%s) sent by api server.", status))
+				return yr, false, errors.New(fmt.Sprintf("Unknown status parameter (%s) sent by api server.", status))
 			}
 		}
 
@@ -302,7 +303,8 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 		}
 
 		// we're done!
-		break
+		yr.ok = true
+		return yr, true, nil
 	}
 
 	return nil, false, errors.New("None of the api servers responded. Could not verify OTP")
@@ -310,7 +312,6 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 
 type yubiResponse struct {
 	query      string
-	response   string
 	parameters map[string]string
 	ok         bool
 }
@@ -330,26 +331,8 @@ func (yr *yubiResponse) GetQuery() string {
 	return yr.query
 }
 
-// Get the last data received from the server, if any.
-func (yr *yubiResponse) GetResponse() string {
-	return yr.response
-}
-
+// Retrieve a parameter (as sent by the api server)
 func (yr *yubiResponse) GetParameter(key string) (value string, ok bool) {
-	//++ TODO(GeertJohan): do this stuff when getting the result in the request:
-	// if ($parameters == null) {
-	// 	$parameters = array('timestamp', 'sessioncounter', 'sessionuse');
-	// }
-	// $param_array = array();
-	// foreach ($parameters as $param) {
-	// 	if(!preg_match("/" . $param . "=([0-9]+)/", $this->_response, $out)) {
-	// 		return PEAR::raiseError('Could not parse parameter ' . $param . ' from response');
-	// 	}
-	// 	$param_array[$param]=$out[1];
-	// }
-	// return $param_array;
-
-	// This method simply wraps the yubiResponse.parameters map
 	value, ok = yr.parameters[key]
 	return
 }
@@ -357,7 +340,7 @@ func (yr *yubiResponse) GetParameter(key string) (value string, ok bool) {
 func main() {
 	id := "9363"
 	key := "7Anl+jXfPuBI+jPixmxxkxKKrX8="
-	otp := "ccccccbfbcnbukughbkvgtkkvgtukfutdhfdrjjfeuhi"
+	otp := "ccccccbfbcnbbdtughnfehfeufeclkjididdljjknndf"
 	a, b, err := ParseOTP(otp)
 	if err != nil {
 		fmt.Println(err)
