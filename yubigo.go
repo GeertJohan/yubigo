@@ -56,7 +56,7 @@ func ParseOTP(otp string) (prefix string, ciphertext string, err error) {
 	return
 }
 
-type yubiAuth struct {
+type YubiAuth struct {
 	id            string
 	key           []byte
 	apiServerList []string
@@ -67,14 +67,14 @@ type yubiAuth struct {
 
 // Create a yubiAuth instance with given id and key.
 // Uses defaults for all other values
-func NewYubiAuth(id string, key string) (auth *yubiAuth, err error) {
+func NewYubiAuth(id string, key string) (auth *YubiAuth, err error) {
 	keyBytes, err := base64.StdEncoding.DecodeString(key)
 	if err != nil {
 		err = errors.New(fmt.Sprintf("Given key seems to be invalid. Could not base64_decode. Error: %s\n", err))
 		return
 	}
 
-	auth = &yubiAuth{
+	auth = &YubiAuth{
 		id:  id,
 		key: keyBytes,
 
@@ -91,7 +91,7 @@ func NewYubiAuth(id string, key string) (auth *yubiAuth, err error) {
 	return
 }
 
-func (ya *yubiAuth) buildHttpClient() {
+func (ya *YubiAuth) buildHttpClient() {
 	tlsConfig := &tls.Config{}
 	if !ya.httpsVerify {
 		tlsConfig.InsecureSkipVerify = true
@@ -110,17 +110,17 @@ func (ya *yubiAuth) buildHttpClient() {
 // Each url should look like this: "api.yubico.com/wsapi/verify".
 // A verify call tries the first url, and uses the following url(s) as failover.
 // There is no loadbalancing involved.
-func (ya *yubiAuth) SetApiServerList(url ...string) {
+func (ya *YubiAuth) SetApiServerList(url ...string) {
 	ya.apiServerList = url
 }
 
 // Retrieve the server url's that are being used for verification.
-func (ya *yubiAuth) GetApiServerList() []string {
+func (ya *YubiAuth) GetApiServerList() []string {
 	return ya.apiServerList
 }
 
 // Setter
-func (ya *yubiAuth) UseHttps(useHttps bool) {
+func (ya *YubiAuth) UseHttps(useHttps bool) {
 	if useHttps {
 		ya.protocol = "https://"
 	} else {
@@ -129,12 +129,12 @@ func (ya *yubiAuth) UseHttps(useHttps bool) {
 }
 
 // Setter
-func (ya *yubiAuth) VerifyHttps(verifyHttps bool) {
+func (ya *YubiAuth) VerifyHttps(verifyHttps bool) {
 	ya.httpsVerify = verifyHttps
 	ya.buildHttpClient()
 }
 
-func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
+func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 	// check the OTP
 	_, _, err = ParseOTP(otp)
 	if err != nil {
@@ -211,7 +211,8 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 		}
 
 		bodyReader := bufio.NewReader(result.Body)
-		yr := NewYubiResponse()
+		yr = &YubiResponse{}
+		yr.parameters = make(map[string]string)
 		yr.query = paramString
 		for {
 			// read through the response lines
@@ -305,29 +306,23 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 	return nil, false, errors.New("None of the api servers responded. Could not verify OTP")
 }
 
-type yubiResponse struct {
+type YubiResponse struct {
 	query      string
 	parameters map[string]string
 	ok         bool
 }
 
-func NewYubiResponse() (response *yubiResponse) {
-	response = &yubiResponse{}
-	response.parameters = make(map[string]string)
-	return response
-}
-
-func (yr *yubiResponse) IsOk() bool {
+func (yr *YubiResponse) IsOk() bool {
 	return yr.ok
 }
 
-// Get the query used for this yubiResponse.
-func (yr *yubiResponse) GetQuery() string {
+// Get the query used for this YubiResponse.
+func (yr *YubiResponse) GetQuery() string {
 	return yr.query
 }
 
 // Retrieve a parameter (as sent by the api server)
-func (yr *yubiResponse) GetParameter(key string) (value string) {
+func (yr *YubiResponse) GetParameter(key string) (value string) {
 	value, ok := yr.parameters[key]
 	if !ok {
 		value = ""
