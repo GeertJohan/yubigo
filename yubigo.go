@@ -1,14 +1,25 @@
 package main
 
 import (
+	"bufio"
+	"crypto/hmac"
+	"crypto/sha1"
+	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
+	"net/http"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+)
+
+const (
+	httpUserAgent = "github.com/GeertJohan/yubigo"
 )
 
 var (
@@ -17,8 +28,9 @@ var (
 		"h", "j", "t", "k", "n", "l", "b", "n", "p", "r", "y", "t", "g", "u", "k", "v",
 		"J", "C", "X", "B", "E", "D", ".", "E", "U", "F", "I", "G", "D", "H", "C", "I",
 		"H", "J", "T", "K", "N", "L", "B", "N", "P", "R", "Y", "T", "G", "U", "K", "V")
-	matchDvorak = regexp.MustCompile(`^[jxe.uidchtnbpygkJXE.UIDCHTNBPYGK]{32,48}$`)
-	matchQwerty = regexp.MustCompile(`^[cbdefghijklnrtuvCBDEFGHIJKLNRTUV]{32,48}$`)
+	matchDvorak     = regexp.MustCompile(`^[jxe.uidchtnbpygkJXE.UIDCHTNBPYGK]{32,48}$`)
+	matchQwerty     = regexp.MustCompile(`^[cbdefghijklnrtuvCBDEFGHIJKLNRTUV]{32,48}$`)
+	signatureUrlFix = regexp.MustCompile(`\+`)
 )
 
 // Parse input string into yubikey prefix, ciphertext
@@ -46,12 +58,12 @@ func ParseOTP(otp string) (prefix string, ciphertext string, err error) {
 }
 
 type yubiAuth struct {
-	id          string
-	key         string
-	url_list    []string
-	url_index   int
-	https       bool
-	httpsverify bool
+	id            string
+	key           []byte
+	apiServerList []string
+	protocol      string
+	httpsVerify   bool
+	client        *http.Client
 }
 
 type yubiResponse struct {
@@ -63,50 +75,71 @@ type yubiResponse struct {
 
 // Create a yubiAuth instance with given id and key.
 // Uses defaults for all other values
-func NewYubiAuth(id string, key string) (auth *yubiAuth) {
+func NewYubiAuth(id string, key string) (auth *yubiAuth, err error) {
+	keyBytes, err := base64.StdEncoding.DecodeString(key)
+	if err != nil {
+		err = errors.New(fmt.Sprintf("Given key seems to be invalid. Could not base64_decode. Error: %s\n", err))
+		return
+	}
+
 	auth = &yubiAuth{
 		id:  id,
-		key: key,
+		key: keyBytes,
 
-		url_list: []string{"api.yubico.com/wsapi/2.0/verify",
+		apiServerList: []string{"api.yubico.com/wsapi/2.0/verify",
 			"api2.yubico.com/wsapi/2.0/verify",
 			"api3.yubico.com/wsapi/2.0/verify",
 			"api4.yubico.com/wsapi/2.0/verify",
 			"api5.yubico.com/wsapi/2.0/verify"},
-		url_index: 0,
 
-		https:       true,
-		httpsverify: true,
+		protocol:    "https://",
+		httpsVerify: true,
 	}
+	auth.buildHttpClient()
 	return
 }
 
-// Use this method to specify a different URL for verification.
-// This method accepts multiple url's for failover.
-// The default is "api.yubico.com/wsapi/verify".
-func (ya *yubiAuth) SetUrlList(url ...string) {
-	ya.url_list = url
-}
-
-// Retrieve the url's that are being used for verification.
-func (ya *yubiAuth) GetUrlList() []string {
-	return ya.url_list
-}
-
-// Get a url from the url_list. Increments on each call. Used for API failover.
-func (ya *yubiAuth) getNextUrl() (string, error) {
-	if ya.url_index >= len(ya.url_list) {
-		return "", errors.New("No next url available.")
+func (ya *yubiAuth) buildHttpClient() {
+	tlsConfig := &tls.Config{}
+	if !ya.httpsVerify {
+		tlsConfig.InsecureSkipVerify = true
 	}
 
-	url := ya.url_list[ya.url_index]
-	ya.url_index++
-	return url, nil
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+
+	ya.client = &http.Client{
+		Transport: transport,
+	}
 }
 
-// Reset the url index thats being used for API failover.
-func (ya *yubiAuth) resetNextUrl() {
-	ya.url_index = 0
+// Use this method to specify a different server(s) for verification.
+// Each url should look like this: "api.yubico.com/wsapi/verify".
+// A verify call tries the first url, and uses the following url(s) as failover.
+// There is no loadbalancing involved.
+func (ya *yubiAuth) SetApiServerList(url ...string) {
+	ya.apiServerList = url
+}
+
+// Retrieve the server url's that are being used for verification.
+func (ya *yubiAuth) GetApiServerList() []string {
+	return ya.apiServerList
+}
+
+// Setter
+func (ya *yubiAuth) UseHttps(useHttps bool) {
+	if useHttps {
+		ya.protocol = "https://"
+	} else {
+		ya.protocol = "http://"
+	}
+}
+
+// Setter
+func (ya *yubiAuth) VerifyHttps(verifyHttps bool) {
+	ya.httpsVerify = verifyHttps
+	ya.buildHttpClient()
 }
 
 func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
@@ -141,7 +174,8 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 	//++ TODO(GeertJohan): add these values to the yubiAuth object and create getters/setters
 	params["timestamp"] = "1"
 	params["sl"] = "secure"
-	//params["timeout"] = ""
+	//++ TODO(GeertJohan): Add timeout support
+	//params["timeout"] = "" 
 
 	// create slice from map containing key=value
 	//++?? Why use a map anyway? Maybe just use slice for the complere process..
@@ -151,75 +185,64 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 	}
 
 	// sort the slice
-	paramSlice = sort.StringSlice(paramSlice)
+	sort.Strings(paramSlice)
 
-	// Create parameter string
+	// create parameter string
 	paramString := strings.Join(paramSlice, "&")
 	log.Printf("paramString: %s\n", paramString)
 
-	/* Generate signature. */
-	if ya.key != "" {
-		// $signature = base64_encode(hash_hmac('sha1', $parameters, $this->_key, true));
-		// $signature = preg_replace('/\+/', '%2B', $signature);
-		// $parameters .= '&h=' . $signature;
+	// generate signature
+	if len(ya.key) > 0 {
+		hmacenc := hmac.New(sha1.New, ya.key)
+		_, err := hmacenc.Write([]byte(paramString))
+		if err != nil {
+			return nil, false, errors.New(fmt.Sprintf("Could not calculate signature. Error: %s\n", err))
+		}
+		signature := base64.StdEncoding.EncodeToString(hmacenc.Sum([]byte{}))
+		signature = signatureUrlFix.ReplaceAllString(signature, `%2B`)
+		paramString = paramString + "&h=" + signature
 	}
+	log.Printf("paramString: %s\n", paramString)
 
-	/* Generate and prepare request. */
-	// $this->_lastquery=null;
-	// $this->URLreset();
-	// $mh = curl_multi_init();
-	// $ch = array();
-	// while($URLpart=$this->getNextURLpart())
-	// {
-	// /* Support https. */
-	// if ($this->_https) {
-	// $query = "https://";
-	// } else {
-	// $query = "http://";
-	// }
-	// $query .= $URLpart . "?" . $parameters;
+	// loop through server list (automatic failover)
+	for _, apiServer := range ya.apiServerList {
 
-	// if ($this->_lastquery) { $this->_lastquery .= " "; }
-	// $this->_lastquery .= $query;
+		url := ya.protocol + apiServer + "?" + paramString
+		log.Println("Will connect to: ", url)
 
-	// $handle = curl_init($query);
-	// curl_setopt($handle, CURLOPT_USERAGENT, "PEAR Auth_Yubico");
-	// curl_setopt($handle, CURLOPT_RETURNTRANSFER, 1);
-	// if (!$this->_httpsverify) {
-	// curl_setopt($handle, CURLOPT_SSL_VERIFYPEER, 0);
-	// }
-	// curl_setopt($handle, CURLOPT_FAILONERROR, true);
-	// /* If timeout is set, we better apply it here as well
-	// in case the validation server fails to follow it.
-	// */
-	// if ($timeout) curl_setopt($handle, CURLOPT_TIMEOUT, $timeout);
-	// curl_multi_add_handle($mh, $handle);
+		request, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, false, errors.New(fmt.Sprintf("Could not create http request. Error: %s\n", err))
+		}
+		request.Header.Add("User-Agent", httpUserAgent)
 
-	// $ch[$handle] = $handle;
-	// }
+		result, err := ya.client.Do(request)
+		if err != nil {
+			log.Println("client err: ", err)
+			continue
+		}
 
-	// /* Execute and read request. */
-	// $this->_response=null;
-	// $replay=False;
-	// $valid=False;
-	// do {
-	// /* Let curl do its work. */
-	// while (($mrc = curl_multi_exec($mh, $active))
-	// == CURLM_CALL_MULTI_PERFORM)
-	// ;
+		bodyReader := bufio.NewReader(result.Body)
+		for {
+			line, err := bodyReader.ReadString('\n')
+			log.Printf("line: %s\n", line)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				log.Print("Got error when reading string from body: %s\n", err)
+				return nil, false, errors.New(fmt.Sprintf("Could not read result body from the server. Error: %s\n", err))
+			}
 
-	// while ($info = curl_multi_info_read($mh)) {
-	// if ($info['result'] == CURLE_OK) {
+			//++ do something with that line!!!
+		}
 
-	// /* We have a complete response from one server. */
+		if true {
+			log.Println("Done?")
+			break
+		}
 
-	// $str = curl_multi_getcontent($info['handle']);
-	// $cinfo = curl_getinfo ($info['handle']);
-
-	// if ($wait_for_all) { # Better debug info
-	// $this->_response .= 'URL=' . $cinfo['url'] ."\n"
-	// . $str . "\n";
-	// }
+	}
 
 	// if (preg_match("/status=([a-zA-Z0-9_]+)/", $str, $out)) {
 	// $status = $out[1];
@@ -324,7 +347,8 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 	// if ($valid) return true;
 	// return PEAR::raiseError('NO_VALID_ANSWER');
 	// }
-	return
+
+	return nil, false, errors.New("None of the api servers responded. Could not verify OTP")
 }
 
 func (yr *yubiResponse) IsOk() bool {
@@ -361,10 +385,26 @@ func (yr *yubiResponse) GetParameter(key string) (value string, ok bool) {
 }
 
 func main() {
-	a, b, err := ParseOTP("enter an OTP here...")
+	id := "9363"
+	key := "7Anl+jXfPuBI+jPixmxxkxKKrX8="
+	otp := "ccccccbfbcnbukughbkvgtkkvgtukfutdhfdrjjfeuhi"
+	a, b, err := ParseOTP(otp)
 	if err != nil {
 		fmt.Println(err)
 	}
 	fmt.Println(a)
 	fmt.Println(b)
+
+	ya, err := NewYubiAuth(id, key)
+	if err != nil {
+		log.Println("main err: ", err)
+	}
+	res, ok, err := ya.Verify(otp)
+	if err != nil {
+		log.Println("main err: ", err)
+	}
+	if ok {
+		log.Println("main is ok!")
+		log.Println(res)
+	}
 }
