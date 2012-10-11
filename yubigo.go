@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net/http"
 	"regexp"
@@ -136,13 +135,11 @@ func (ya *yubiAuth) VerifyHttps(verifyHttps bool) {
 }
 
 func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
-	// check and parse the otp
-	prefix, ciphertext, err := ParseOTP(otp)
+	// check the OTP
+	_, _, err = ParseOTP(otp)
 	if err != nil {
 		return nil, false, err
 	}
-	log.Printf("prefix: %s\n", prefix)
-	log.Printf("ciphertext: %s\n", ciphertext)
 
 	// create map to store parameters for this verification request
 	params := make(map[string]string)
@@ -200,7 +197,6 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 	for _, apiServer := range ya.apiServerList {
 
 		url := ya.protocol + apiServer + "?" + paramString
-		log.Println("Will connect to: ", url)
 
 		request, err := http.NewRequest("GET", url, nil)
 		if err != nil {
@@ -220,7 +216,6 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 		for {
 			// read through the response lines
 			line, err := bodyReader.ReadString('\n')
-			log.Printf("line: %s\n", line)
 
 			// handle error, which at one point should be an expected io.EOF (end of file)
 			if err != nil {
@@ -332,7 +327,10 @@ func (yr *yubiResponse) GetQuery() string {
 }
 
 // Retrieve a parameter (as sent by the api server)
-func (yr *yubiResponse) GetParameter(key string) (value string, ok bool) {
-	value, ok = yr.parameters[key]
-	return
+func (yr *yubiResponse) GetParameter(key string) (value string) {
+	value, ok := yr.parameters[key]
+	if !ok {
+		value = ""
+	}
+	return value
 }

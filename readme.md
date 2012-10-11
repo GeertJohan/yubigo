@@ -1,7 +1,7 @@
 
 ## yubigo
 
-The Yubigo authentication Go package provides an easy way to integrate the Yubico Yubikey into your existing Go-based user authentication infrastructure. Installation is simple using `go get`.
+The Yubigo authentication Go package provides an easy way to integrate the Yubico Yubikey into your existing Go-based user authentication infrastructure. 
 
 ### Status and Roadmap
 
@@ -33,7 +33,6 @@ if err != nil {
 	log.Fatalln(err)
 }
 
-
 // verify an OTP value
 result, ok, err := yubiAuth.Verify("ccccccbetgjevivbklihljgtbenbfrefccveiglnjfbc")
 if err != nil {
@@ -42,10 +41,14 @@ if err != nil {
 
 if ok {
 	// succes!! The OTP is valid!
-	// use result.GetParameter("key") to inspect the data sent by the api server.
+	// lets get some data from the result
+	sessioncounter := result.GetParameter("sessioncounter")
+	log.Println("This was the  %sth time the Yubikey was pluggin into a computer.\n", sessioncounter)
 } else {
 	// fail! The OTP is invalid or has been used before.
+	log.Println("The given OTP is invalid!!!")
 }
+
 ```
 
 ### Validation Protocol
