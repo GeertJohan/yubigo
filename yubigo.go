@@ -57,12 +57,12 @@ func ParseOTP(otp string) (prefix string, ciphertext string, err error) {
 }
 
 type YubiAuth struct {
-	id            string
-	key           []byte
-	apiServerList []string
-	protocol      string
-	httpsVerify   bool
-	client        *http.Client
+	id                string
+	key               []byte
+	apiServerList     []string
+	protocol          string
+	verifyCertificate bool
+	client            *http.Client
 }
 
 // Create a yubiAuth instance with given id and key.
@@ -84,8 +84,8 @@ func NewYubiAuth(id string, key string) (auth *YubiAuth, err error) {
 			"api4.yubico.com/wsapi/2.0/verify",
 			"api5.yubico.com/wsapi/2.0/verify"},
 
-		protocol:    "https://",
-		httpsVerify: true,
+		protocol:          "https://",
+		verifyCertificate: true,
 	}
 	auth.buildHttpClient()
 	return
@@ -93,7 +93,7 @@ func NewYubiAuth(id string, key string) (auth *YubiAuth, err error) {
 
 func (ya *YubiAuth) buildHttpClient() {
 	tlsConfig := &tls.Config{}
-	if !ya.httpsVerify {
+	if !ya.verifyCertificate {
 		tlsConfig.InsecureSkipVerify = true
 	}
 
@@ -129,8 +129,8 @@ func (ya *YubiAuth) UseHttps(useHttps bool) {
 }
 
 // Setter
-func (ya *YubiAuth) VerifyHttps(verifyHttps bool) {
-	ya.httpsVerify = verifyHttps
+func (ya *YubiAuth) HttpsVerifyCertificate(verifyCertificate bool) {
+	ya.verifyCertificate = verifyCertificate
 	ya.buildHttpClient()
 }
 
