@@ -43,12 +43,30 @@ if ok {
 	// succes!! The OTP is valid!
 	// lets get some data from the result
 	sessioncounter := result.GetParameter("sessioncounter")
-	log.Println("This was the  %sth time the Yubikey was pluggin into a computer.\n", sessioncounter)
+	log.Printf("This was the  %sth time the Yubikey was pluggin into a computer.\n", sessioncounter)
 } else {
 	// fail! The OTP is invalid or has been used before.
 	log.Println("The given OTP is invalid!!!")
 }
+```
 
+Do not verify HTTPS certificate:
+```go
+// Disable HTTPS cert verification. Use true to enable again.
+yubiAuth.VerifyHttps(false)
+```
+
+HTTP instead of HTTPS:
+```go
+// Disable HTTPS. Use true to enable again.
+yubiAuth.UseHttps(false)
+```
+
+Custom API server:
+```go
+// Set a list of n servers, each server as host + path. 
+// Do not prepend with protocol
+yubiAuth.SetApiServerList("api0.server.com/api/verify", "api1.server.com/api/verify", "otherserver.com/api/verify")
 ```
 
 ### Validation Protocol
