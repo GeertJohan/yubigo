@@ -66,13 +66,6 @@ type yubiAuth struct {
 	client        *http.Client
 }
 
-type yubiResponse struct {
-	query      string
-	response   string
-	parameters map[string]string
-	ok         bool
-}
-
 // Create a yubiAuth instance with given id and key.
 // Uses defaults for all other values
 func NewYubiAuth(id string, key string) (auth *yubiAuth, err error) {
@@ -168,7 +161,8 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 		}
 		k[i] = rune(c)
 	}
-	params["nonce"] = string(k)
+	nonce := string(k)
+	params["nonce"] = nonce
 
 	// hardcoded in the library for now.
 	//++ TODO(GeertJohan): add these values to the yubiAuth object and create getters/setters
@@ -189,7 +183,6 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 
 	// create parameter string
 	paramString := strings.Join(paramSlice, "&")
-	log.Printf("paramString: %s\n", paramString)
 
 	// generate signature
 	if len(ya.key) > 0 {
@@ -202,7 +195,6 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 		signature = signatureUrlFix.ReplaceAllString(signature, `%2B`)
 		paramString = paramString + "&h=" + signature
 	}
-	log.Printf("paramString: %s\n", paramString)
 
 	// loop through server list (automatic failover)
 	for _, apiServer := range ya.apiServerList {
@@ -218,23 +210,67 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 
 		result, err := ya.client.Do(request)
 		if err != nil {
-			log.Println("client err: ", err)
+			// that didn't work, now failover!
 			continue
 		}
 
 		bodyReader := bufio.NewReader(result.Body)
+		yr := NewYubiResponse()
 		for {
+			// read through the response lines
 			line, err := bodyReader.ReadString('\n')
 			log.Printf("line: %s\n", line)
+
+			// handle error, which at one point should be an expected io.EOF (end of file)
 			if err != nil {
 				if err == io.EOF {
-					break
+					break // successfully done with reading lines, lets break this for loop
 				}
-				log.Print("Got error when reading string from body: %s\n", err)
 				return nil, false, errors.New(fmt.Sprintf("Could not read result body from the server. Error: %s\n", err))
 			}
 
-			//++ do something with that line!!!
+			// parse result lines, split on first '=', trim \n and \r
+			keyvalue := strings.SplitN(line, "=", 2)
+			if len(keyvalue) == 2 {
+				yr.parameters[keyvalue[0]] = strings.Trim(keyvalue[1], "\n\r")
+			}
+		}
+
+		// check status
+		status, ok := yr.parameters["status"]
+		if !ok || status != "OK" {
+			switch status {
+			case "BAD_OTP":
+				return nil, false, nil
+			case "REPLAYED_OTP":
+				return nil, false, nil
+			case "BAD_SIGNATURE":
+				return nil, false, errors.New("Signature verification at the api server failed. The used id/key combination could be invalid or is not activated (yet).")
+			case "NO_SUCH_CLIENT":
+				return nil, false, errors.New("The api server does not accept the given id. It might be invalid or is not activated (yet).")
+			case "OPERATION_NOT_ALLOWED":
+				return nil, false, errors.New("The api server does not allow the given api id to verify OTPs.")
+			case "BACKEND_ERROR":
+				return nil, false, errors.New("The api server seems to be broken. Please contact the api servers system administration (yubico servers? contact yubico).")
+			case "NOT_ENOUGH_ANSWERS":
+				return nil, false, errors.New("The api server could not get requested number of syncs during before timeout")
+			case "REPLAYED_REQUEST":
+				return nil, false, errors.New("The api server has seen this unique request before. If you receive this error, you might be the victim of a man-in-the-middle attack.")
+			default:
+				return nil, false, errors.New(fmt.Sprintf("Unknown status parameter (%s) sent by api server.", status))
+			}
+		}
+
+		// check otp
+		otpCheck, ok := yr.parameters["otp"]
+		if !ok || otp != otpCheck {
+			return nil, false, errors.New("Could not validate otp value from server response.")
+		}
+
+		// check nonce
+		nonceCheck, ok := yr.parameters["nonce"]
+		if !ok || nonce != nonceCheck {
+			return nil, false, errors.New("Could not validate nonce value from server response.")
 		}
 
 		if true {
@@ -250,7 +286,7 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 	// /*
 	// * There are 3 cases.
 	// *
-	// * 1. OTP or Nonce values doesn't match - ignore
+	// * 1. OTP or Nonce values does not match - ignore
 	// * response.
 	// *
 	// * 2. We have a HMAC key. If signature is invalid -
@@ -349,6 +385,19 @@ func (ya *yubiAuth) Verify(otp string) (yr *yubiResponse, ok bool, err error) {
 	// }
 
 	return nil, false, errors.New("None of the api servers responded. Could not verify OTP")
+}
+
+type yubiResponse struct {
+	query      string
+	response   string
+	parameters map[string]string
+	ok         bool
+}
+
+func NewYubiResponse() (response *yubiResponse) {
+	response = &yubiResponse{}
+	response.parameters = make(map[string]string)
+	return response
 }
 
 func (yr *yubiResponse) IsOk() bool {
