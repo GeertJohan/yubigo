@@ -14,6 +14,12 @@ Development is co-ordinated via this github repository. If you made an improveme
 
 This project is licensed under a Simplified BSD license. Please read the LICENSE file.
 
+#### Todo
+ - parallel connection
+ - removing the usage of a map in Verify()
+ - test files
+ - more documentation
+
 ### Installation
 
 Installation is simple. Use go get:
