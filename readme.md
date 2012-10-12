@@ -25,6 +25,8 @@ This project is licensed under a Simplified BSD license. Please read the [LICENS
 Installation is simple. Use go get:
 `go get github.com/GeertJohan/yubigo`
 
+This github repository has a tag `go1`. `go get` will download the revision on that tag. The revision at the `go1` tag is the latest stable revision available.
+
 ### Usage
 
 Make sure to import the package: `import "github.com/GeertJohan/yubigo"`
