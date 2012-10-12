@@ -1,7 +1,7 @@
 
 ## yubigo
 
-Yubigo is a Yubikey client API library, that provides an easy way to integrate the Yubico Yubikey into your existing Go-based user authentication infrastructure.
+Yubigo is a Yubikey client API library that provides an easy way to integrate the Yubico Yubikey into your existing Go-based user authentication infrastructure.
 
 ### Status and Roadmap
 
@@ -12,7 +12,7 @@ Everything is subject to change.
 
 Development is co-ordinated via this github repository. If you made an improvement, please request for pull!
 
-This project is licensed under a Simplified BSD license. Please read the LICENSE file.
+This project is licensed under a Simplified BSD license. Please read the [LICENSE file][license].
 
 #### Todo
  - parallel connection
@@ -29,8 +29,7 @@ Installation is simple. Use go get:
 
 Make sure to import the package: `import "github.com/GeertJohan/yubigo"`
 
-For use with the default Yubico servers, make sure you have an API key.
-You can request a key here: https://upgrade.yubico.com/getapikey/
+For use with the default Yubico servers, make sure you have an API key. [Request a key][getapikey].
 
 **Basic OTP checking usage:**
 ```go
@@ -81,6 +80,15 @@ yubiAuth.UseHttps(false)
 yubiAuth.SetApiServerList("api0.server.com/api/verify", "api1.server.com/api/verify", "otherserver.com/api/verify")
 ```
 
-### Validation Protocol
 
-The goal of this package is to implement a pure-Go Yubico OTP Validation Client which is following the Validation Protocol Version 2.0 as specified here: http://code.google.com/p/yubikey-val-server-php/wiki/ValidationProtocolV20
+### Extra information
+
+This project is implementing a pure-Go Yubico OTP Validation Client following the [Validation Protocol Version 2.0][validationProtocolV20].
+
+[Package contents documentation at go.pkgdoc.org][pkgdoc]
+
+
+ [license]: https://github.com/GeertJohan/yubigo/blob/master/LICENSE
+ [getapikey]: https://upgrade.yubico.com/getapikey/
+ [pkgdoc]: http://go.pkgdoc.org/github.com/GeertJohan/yubigo
+ [validationProtocolV20]: http://code.google.com/p/yubikey-val-server-php/wiki/ValidationProtocolV20
