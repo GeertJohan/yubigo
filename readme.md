@@ -1,7 +1,7 @@
 
 ## yubigo
 
-The Yubigo authentication Go package/library provides an easy way to integrate the Yubico Yubikey into your existing Go-based user authentication infrastructure.
+Yubigo is a Yubikey client API library, that provides an easy way to integrate the Yubico Yubikey into your existing Go-based user authentication infrastructure.
 
 ### Status and Roadmap
 
@@ -29,6 +29,8 @@ Installation is simple. Use go get:
 
 Make sure to import the package: `import "github.com/GeertJohan/yubigo"`
 
+For use with the default Yubico servers, make sure you have an API key.
+You can request a key here: https://upgrade.yubico.com/getapikey/
 
 **Basic OTP checking usage:**
 ```go
