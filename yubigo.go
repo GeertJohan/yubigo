@@ -65,8 +65,8 @@ type YubiAuth struct {
 	client            *http.Client
 }
 
-// Create a yubiAuth instance with given id and key.
-// Uses defaults for all other values
+// Create a yubiAuth instance with given API-id and API-key.
+// Returns an error when the key could not be base64 decoded.
 func NewYubiAuth(id string, key string) (auth *YubiAuth, err error) {
 	keyBytes, err := base64.StdEncoding.DecodeString(key)
 	if err != nil {
@@ -106,20 +106,19 @@ func (ya *YubiAuth) buildHttpClient() {
 	}
 }
 
-// Use this method to specify a different server(s) for verification.
-// Each url should look like this: "api.yubico.com/wsapi/verify".
-// A verify call tries the first url, and uses the following url(s) as failover.
-// There is no loadbalancing involved.
+// Use this method to specify a list of servers for verification.
+// Each server string should contain host + path. 
+// Example: "api.yubico.com/wsapi/verify".
 func (ya *YubiAuth) SetApiServerList(url ...string) {
 	ya.apiServerList = url
 }
 
-// Retrieve the server url's that are being used for verification.
+// Retrieve the the ist of servers that are being used for verification.
 func (ya *YubiAuth) GetApiServerList() []string {
 	return ya.apiServerList
 }
 
-// Setter
+// Enable or disable the use of https
 func (ya *YubiAuth) UseHttps(useHttps bool) {
 	if useHttps {
 		ya.protocol = "https://"
@@ -128,12 +127,17 @@ func (ya *YubiAuth) UseHttps(useHttps bool) {
 	}
 }
 
-// Setter
+// Enable or disable https certificate verification
+// Disable this at your own risk.
 func (ya *YubiAuth) HttpsVerifyCertificate(verifyCertificate bool) {
 	ya.verifyCertificate = verifyCertificate
 	ya.buildHttpClient()
 }
 
+// The verify method calls the API with given OTP and returns if the OTP is valid or not.
+// This method will return an error if something unexpected happens
+// If no error was returned, the returned 'ok bool' indicates if the OTP is valid
+// if the 'ok bool' is true, additional informtion can be found in the returned YubiResponse object
 func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 	// check the OTP
 	_, _, err = ParseOTP(otp)
@@ -165,7 +169,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 	//++ TODO(GeertJohan): add these values to the yubiAuth object and create getters/setters
 	params["timestamp"] = "1"
 	params["sl"] = "secure"
-	//++ TODO(GeertJohan): Add timeout support
+	//++ TODO(GeertJohan): Add timeout support?
 	//params["timeout"] = "" 
 
 	// create slice from map containing key=value
@@ -303,25 +307,28 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		return yr, true, nil
 	}
 
+	// as we're here.. we left the for loop, this means that no server responded properly.
 	return nil, false, errors.New("None of the api servers responded. Could not verify OTP")
 }
 
+// Contains details about yubikey OTP verification.
 type YubiResponse struct {
 	query      string
 	parameters map[string]string
 	ok         bool
 }
 
+// Returns wether the verification was successful
 func (yr *YubiResponse) IsOk() bool {
 	return yr.ok
 }
 
-// Get the query used for this YubiResponse.
+// Get the query that was used during verification.
 func (yr *YubiResponse) GetQuery() string {
 	return yr.query
 }
 
-// Retrieve a parameter (as sent by the api server)
+// Retrieve a parameter from the api's response
 func (yr *YubiResponse) GetParameter(key string) (value string) {
 	value, ok := yr.parameters[key]
 	if !ok {
