@@ -17,10 +17,6 @@ import (
 	"time"
 )
 
-const (
-	httpUserAgent = "github.com/GeertJohan/yubigo"
-)
-
 var (
 	dvorakToQwerty = strings.NewReplacer(
 		"j", "c", "x", "b", "e", "d", ".", "e", "u", "f", "i", "g", "d", "h", "c", "i",
@@ -206,7 +202,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		if err != nil {
 			return nil, false, errors.New(fmt.Sprintf("Could not create http request. Error: %s\n", err))
 		}
-		request.Header.Add("User-Agent", httpUserAgent)
+		request.Header.Add("User-Agent", "github.com/GeertJohan/yubigo")
 
 		result, err := ya.client.Do(request)
 		if err != nil {
