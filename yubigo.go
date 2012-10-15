@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -58,7 +60,86 @@ type YubiAuth struct {
 	apiServerList     []string
 	protocol          string
 	verifyCertificate bool
-	client            *http.Client
+	workers           []*verifyWorker
+	use               sync.Mutex
+}
+
+type verifyWorker struct {
+	client    *http.Client
+	apiServer string
+	work      chan *workRequest
+	stop      chan bool
+}
+
+type workRequest struct {
+	paramString *string
+	resultChan  chan *workResult
+}
+
+type workResult struct {
+	response     *http.Response
+	requestQuery string
+	err          error // indicates a failing server/network. This doesn't mean the OTP is invalid.
+}
+
+func (vw *verifyWorker) process() {
+	log.Println("Started worker...")
+	for {
+		select {
+		case w := <-vw.work:
+			log.Println("Have work.")
+			// create url
+			url := vw.apiServer + *w.paramString
+
+			// create request
+			request, err := http.NewRequest("GET", url, nil)
+			if err != nil {
+				w.resultChan <- &workResult{
+					response:     nil,
+					requestQuery: url,
+					err:          errors.New(fmt.Sprintf("Could not create http request. Error: %s\n", err)),
+				}
+				continue
+			}
+			request.Header.Add("User-Agent", "github.com/GeertJohan/yubigo")
+
+			// call server
+			response, err := vw.client.Do(request)
+
+			// if we received an error from the client, return that (wrapped) on the channel.
+			if err != nil {
+				w.resultChan <- &workResult{
+					response:     nil,
+					requestQuery: url,
+					err:          errors.New(fmt.Sprintf("Fail in client: %s\n", err)),
+				}
+				continue
+			}
+
+			// development print body
+			bodyReader := bufio.NewReader(response.Body)
+			log.Printf("Result from server %s : \n", vw.apiServer)
+			fmt.Printf("Request was: %s\n", *w.paramString)
+			for {
+				line, err := bodyReader.ReadString('\n')
+				if err != nil {
+					break
+				}
+				fmt.Print(line)
+			}
+			fmt.Println("-----\n")
+
+			// it seems everything is ok! return the response (wrapped) on the channel.
+			w.resultChan <- &workResult{
+				response:     response,
+				requestQuery: url,
+				err:          nil,
+			}
+			continue
+		case <-vw.stop:
+			return
+		}
+	}
 }
 
 // Create a yubiAuth instance with given API-id and API-key.
@@ -83,22 +164,44 @@ func NewYubiAuth(id string, key string) (auth *YubiAuth, err error) {
 		protocol:          "https://",
 		verifyCertificate: true,
 	}
-	auth.buildHttpClient()
+	auth.buildHttpClients()
 	return
 }
 
-func (ya *YubiAuth) buildHttpClient() {
+func (ya *YubiAuth) buildHttpClients() {
+
+	// create tls config
 	tlsConfig := &tls.Config{}
 	if !ya.verifyCertificate {
 		tlsConfig.InsecureSkipVerify = true
 	}
 
-	transport := &http.Transport{
-		TLSClientConfig: tlsConfig,
+	// stop all existing workers
+	for _, worker := range ya.workers {
+		worker.stop <- true
 	}
 
-	ya.client = &http.Client{
-		Transport: transport,
+	// create new (empty) slice with exact capacity
+	ya.workers = make([]*verifyWorker, 0, len(ya.apiServerList))
+
+	// start new workers. One for each apiServerString
+	for _, apiServer := range ya.apiServerList {
+		// create worker instance with new http.Client instance
+		worker := &verifyWorker{
+			client: &http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig: tlsConfig,
+				},
+			},
+			apiServer: ya.protocol + apiServer + "?",
+			work:      make(chan *workRequest),
+			stop:      make(chan bool),
+		}
+
+		ya.workers = append(ya.workers, worker)
+
+		// start worker process in new goroutine
+		go worker.process()
 	}
 }
 
@@ -106,7 +209,15 @@ func (ya *YubiAuth) buildHttpClient() {
 // Each server string should contain host + path. 
 // Example: "api.yubico.com/wsapi/verify".
 func (ya *YubiAuth) SetApiServerList(url ...string) {
+	// Lock
+	ya.use.Lock()
+	defer ya.use.Unlock()
+
+	// change setting
 	ya.apiServerList = url
+
+	// rebuild workers
+	ya.buildHttpClients()
 }
 
 // Retrieve the the ist of servers that are being used for verification.
@@ -116,18 +227,33 @@ func (ya *YubiAuth) GetApiServerList() []string {
 
 // Enable or disable the use of https
 func (ya *YubiAuth) UseHttps(useHttps bool) {
+	// Lock
+	ya.use.Lock()
+	defer ya.use.Unlock()
+
+	// change setting
 	if useHttps {
 		ya.protocol = "https://"
 	} else {
 		ya.protocol = "http://"
 	}
+
+	// rebuild workers
+	ya.buildHttpClients()
 }
 
 // Enable or disable https certificate verification
 // Disable this at your own risk.
 func (ya *YubiAuth) HttpsVerifyCertificate(verifyCertificate bool) {
+	// Lock
+	ya.use.Lock()
+	defer ya.use.Unlock()
+
+	// change setting
 	ya.verifyCertificate = verifyCertificate
-	ya.buildHttpClient()
+
+	// rebuild workers
+	ya.buildHttpClients()
 }
 
 // The verify method calls the API with given OTP and returns if the OTP is valid or not.
@@ -135,16 +261,20 @@ func (ya *YubiAuth) HttpsVerifyCertificate(verifyCertificate bool) {
 // If no error was returned, the returned 'ok bool' indicates if the OTP is valid
 // if the 'ok bool' is true, additional informtion can be found in the returned YubiResponse object
 func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
+	// Lock
+	ya.use.Lock()
+	defer ya.use.Unlock()
+
 	// check the OTP
 	_, _, err = ParseOTP(otp)
 	if err != nil {
 		return nil, false, err
 	}
 
-	// create map to store parameters for this verification request
-	params := make(map[string]string)
-	params["id"] = ya.id
-	params["otp"] = otp
+	// create slice to store parameters for this verification request
+	paramSlice := make([]string, 0) //++ Add initial len/cap
+	paramSlice = append(paramSlice, "id="+ya.id)
+	paramSlice = append(paramSlice, "otp="+otp)
 
 	// Create 40 characters nonce
 	rand.Seed(time.Now().UnixNano())
@@ -159,21 +289,14 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		k[i] = rune(c)
 	}
 	nonce := string(k)
-	params["nonce"] = nonce
+	paramSlice = append(paramSlice, "nonce="+nonce)
 
-	// hardcoded in the library for now.
+	// these settings are hardcoded in the library for now.
 	//++ TODO(GeertJohan): add these values to the yubiAuth object and create getters/setters
-	params["timestamp"] = "1"
-	params["sl"] = "secure"
+	// paramSlice = append(paramSlice, "timestamp=1")
+	// paramSlice = append(paramSlice, "sl=secure")
 	//++ TODO(GeertJohan): Add timeout support?
-	//params["timeout"] = "" 
-
-	// create slice from map containing key=value
-	//++?? Why use a map anyway? Maybe just use slice for the complere process..
-	paramSlice := make([]string, 0, len(params))
-	for key, value := range params {
-		paramSlice = append(paramSlice, key+"="+value)
-	}
+	//++ //paramSlice = append(paramSlice, "timeout=")
 
 	// sort the slice
 	sort.Strings(paramSlice)
@@ -193,140 +316,167 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		paramString = paramString + "&h=" + signature
 	}
 
-	// loop through server list (simple but effective api server failover)
-	for _, apiServer := range ya.apiServerList {
+	// create result channel, buffer is same size as amount of workers
+	resultChan := make(chan *workResult, len(ya.workers))
 
-		url := ya.protocol + apiServer + "?" + paramString
+	// create workRequest instance
+	wr := &workRequest{
+		paramString: &paramString,
+		resultChan:  resultChan,
+	}
 
-		request, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			return nil, false, errors.New(fmt.Sprintf("Could not create http request. Error: %s\n", err))
-		}
-		request.Header.Add("User-Agent", "github.com/GeertJohan/yubigo")
+	// send workRequest to each worker
+	for _, worker := range ya.workers {
+		worker.work <- wr
+	}
 
-		result, err := ya.client.Do(request)
-		if err != nil {
-			// that didn't work, now failover!
+	// count the errors so we can handle when all servers fail (network fail for instance)
+	errCount := 0
+
+	// local result var, will contain the first result we have
+	var result *workResult
+
+	// keep looping until we have a good result
+	for {
+		// listen for result from a worker
+		result = <-resultChan
+
+		// check for error
+		if result.err != nil {
+			// increment error counter
+			errCount++
+
+			// development logging
+			log.Printf("A server (%s) gave error back: %s\n", result.requestQuery, result.err)
+
+			// all workers are done, there's nothing left to try. we return an error.
+			if errCount == len(ya.apiServerList) {
+				return nil, false, errors.New("None of the servers responded properly.")
+			}
+
+			// we have an error, but not all workers responded yet, so lets try the next result.
 			continue
 		}
 
-		bodyReader := bufio.NewReader(result.Body)
-		yr = &YubiResponse{}
-		yr.parameters = make(map[string]string)
-		yr.query = paramString
-		for {
-			// read through the response lines
-			line, err := bodyReader.ReadString('\n')
-
-			// handle error, which at one point should be an expected io.EOF (end of file)
-			if err != nil {
-				if err == io.EOF {
-					break // successfully done with reading lines, lets break this for loop
-				}
-				return nil, false, errors.New(fmt.Sprintf("Could not read result body from the server. Error: %s\n", err))
-			}
-
-			// parse result lines, split on first '=', trim \n and \r
-			keyvalue := strings.SplitN(line, "=", 2)
-			if len(keyvalue) == 2 {
-				yr.parameters[keyvalue[0]] = strings.Trim(keyvalue[1], "\n\r")
-			}
-		}
-
-		// check status
-		status, ok := yr.parameters["status"]
-		if !ok || status != "OK" {
-			switch status {
-			case "BAD_OTP":
-				return yr, false, nil
-			case "REPLAYED_OTP":
-				return yr, false, nil
-			case "BAD_SIGNATURE":
-				return yr, false, errors.New("Signature verification at the api server failed. The used id/key combination could be invalid or is not activated (yet).")
-			case "NO_SUCH_CLIENT":
-				return yr, false, errors.New("The api server does not accept the given id. It might be invalid or is not activated (yet).")
-			case "OPERATION_NOT_ALLOWED":
-				return yr, false, errors.New("The api server does not allow the given api id to verify OTPs.")
-			case "BACKEND_ERROR":
-				return yr, false, errors.New("The api server seems to be broken. Please contact the api servers system administration (yubico servers? contact yubico).")
-			case "NOT_ENOUGH_ANSWERS":
-				return yr, false, errors.New("The api server could not get requested number of syncs during before timeout")
-			case "REPLAYED_REQUEST":
-				return yr, false, errors.New("The api server has seen this unique request before. If you receive this error, you might be the victim of a man-in-the-middle attack.")
-			default:
-				return yr, false, errors.New(fmt.Sprintf("Unknown status parameter (%s) sent by api server.", status))
-			}
-		}
-
-		// check otp
-		otpCheck, ok := yr.parameters["otp"]
-		if !ok || otp != otpCheck {
-			return nil, false, errors.New("Could not validate otp value from server response.")
-		}
-
-		// check nonce
-		nonceCheck, ok := yr.parameters["nonce"]
-		if !ok || nonce != nonceCheck {
-			return nil, false, errors.New("Could not validate nonce value from server response.")
-		}
-
-		// check attached signature with remake of that signature, if key is actually in use.
-		if len(ya.key) > 0 {
-			receivedSignature, ok := yr.parameters["h"]
-			if !ok || len(receivedSignature) == 0 {
-				return nil, false, errors.New("No signature hash was attached by the api server, we do expect one though. This might be a hacking attempt.")
-			}
-
-			// create a slice with the same size-1 as the parameters map (we're leaving the hash itself out of it's replica calculation)
-			receivedValuesSlice := make([]string, 0, len(yr.parameters)-1)
-			for key, value := range yr.parameters {
-				if key != "h" {
-					receivedValuesSlice = append(receivedValuesSlice, key+"="+value)
-				}
-			}
-			sort.Strings(receivedValuesSlice)
-			receivedValuesString := strings.Join(receivedValuesSlice, "&")
-			hmacenc := hmac.New(sha1.New, ya.key)
-			_, err := hmacenc.Write([]byte(receivedValuesString))
-			if err != nil {
-				return nil, false, errors.New(fmt.Sprintf("Could not calculate signature replica. Error: %s\n", err))
-			}
-			recievedSignatureReplica := base64.StdEncoding.EncodeToString(hmacenc.Sum([]byte{}))
-
-			if receivedSignature != recievedSignatureReplica {
-				return nil, false, errors.New("The received signature hash is not valid. This might be a hacking attempt.")
-			}
-		}
-
-		// we're done!
-		yr.ok = true
-		return yr, true, nil
+		// no error? Then lets use the result we have!
+		break
 	}
 
-	// as we're here.. we left the for loop, this means that no server responded properly.
-	return nil, false, errors.New("None of the api servers responded. Could not verify OTP")
+	// parse the response
+	bodyReader := bufio.NewReader(result.response.Body)
+	yr = &YubiResponse{}
+	yr.resultParameters = make(map[string]string)
+	yr.requestQuery = result.requestQuery
+	for {
+		// read through the response lines
+		line, err := bodyReader.ReadString('\n')
+
+		// handle error, which at one point should be an expected io.EOF (end of file)
+		if err != nil {
+			if err == io.EOF {
+				break // successfully done with reading lines, lets break this for loop
+			}
+			return nil, false, errors.New(fmt.Sprintf("Could not read result body from the server. Error: %s\n", err))
+		}
+
+		// parse result lines, split on first '=', trim \n and \r
+		keyvalue := strings.SplitN(line, "=", 2)
+		if len(keyvalue) == 2 {
+			yr.resultParameters[keyvalue[0]] = strings.Trim(keyvalue[1], "\n\r")
+		}
+	}
+
+	// check status
+	status, ok := yr.resultParameters["status"]
+	if !ok || status != "OK" {
+		switch status {
+		case "BAD_OTP":
+			return yr, false, nil
+		case "REPLAYED_OTP":
+			return yr, false, errors.New("The OTP is valid, but has been used before. If you receive this error, you might be the victim of a man-in-the-middle attack.")
+		case "BAD_SIGNATURE":
+			return yr, false, errors.New("Signature verification at the api server failed. The used id/key combination could be invalid or is not activated (yet).")
+		case "NO_SUCH_CLIENT":
+			return yr, false, errors.New("The api server does not accept the given id. It might be invalid or is not activated (yet).")
+		case "OPERATION_NOT_ALLOWED":
+			return yr, false, errors.New("The api server does not allow the given api id to verify OTPs.")
+		case "BACKEND_ERROR":
+			return yr, false, errors.New("The api server seems to be broken. Please contact the api servers system administration (yubico servers? contact yubico).")
+		case "NOT_ENOUGH_ANSWERS":
+			return yr, false, errors.New("The api server could not get requested number of syncs during before timeout")
+		case "REPLAYED_REQUEST":
+			return yr, false, errors.New("The api server has seen this unique request before. If you receive this error, you might be the victim of a man-in-the-middle attack.")
+		default:
+			return yr, false, errors.New(fmt.Sprintf("Unknown status parameter (%s) sent by api server.", status))
+		}
+	}
+
+	// check otp
+	otpCheck, ok := yr.resultParameters["otp"]
+	if !ok || otp != otpCheck {
+		return nil, false, errors.New("Could not validate otp value from server response.")
+	}
+
+	// check nonce
+	nonceCheck, ok := yr.resultParameters["nonce"]
+	if !ok || nonce != nonceCheck {
+		return nil, false, errors.New("Could not validate nonce value from server response.")
+	}
+
+	// check attached signature with remake of that signature, if key is actually in use.
+	if len(ya.key) > 0 {
+		receivedSignature, ok := yr.resultParameters["h"]
+		if !ok || len(receivedSignature) == 0 {
+			return nil, false, errors.New("No signature hash was attached by the api server, we do expect one though. This might be a hacking attempt.")
+		}
+
+		// create a slice with the same size-1 as the parameters map (we're leaving the hash itself out of it's replica calculation)
+		receivedValuesSlice := make([]string, 0, len(yr.resultParameters)-1)
+		for key, value := range yr.resultParameters {
+			if key != "h" {
+				receivedValuesSlice = append(receivedValuesSlice, key+"="+value)
+			}
+		}
+		sort.Strings(receivedValuesSlice)
+		receivedValuesString := strings.Join(receivedValuesSlice, "&")
+		hmacenc := hmac.New(sha1.New, ya.key)
+		_, err := hmacenc.Write([]byte(receivedValuesString))
+		if err != nil {
+			return nil, false, errors.New(fmt.Sprintf("Could not calculate signature replica. Error: %s\n", err))
+		}
+		recievedSignatureReplica := base64.StdEncoding.EncodeToString(hmacenc.Sum([]byte{}))
+
+		if receivedSignature != recievedSignatureReplica {
+			return nil, false, errors.New("The received signature hash is not valid. This might be a hacking attempt.")
+		}
+	}
+
+	// we're done!
+	yr.validOTP = true
+	return yr, true, nil
+
 }
 
 // Contains details about yubikey OTP verification.
 type YubiResponse struct {
-	query      string
-	parameters map[string]string
-	ok         bool
+	requestQuery     string            //++ rename to requestQuery
+	resultParameters map[string]string //++ rename to resultParameters
+	validOTP         bool              //++ rename to validOTP
 }
 
 // Returns wether the verification was successful
-func (yr *YubiResponse) IsOk() bool {
-	return yr.ok
+func (yr *YubiResponse) IsValidOTP() bool {
+	return yr.validOTP
 }
 
-// Get the query that was used during verification.
-func (yr *YubiResponse) GetQuery() string {
-	return yr.query
+// Get the requestQuery that was used during verification.
+func (yr *YubiResponse) GetRequestQuery() string {
+	return yr.requestQuery
 }
 
 // Retrieve a parameter from the api's response
-func (yr *YubiResponse) GetParameter(key string) (value string) {
-	value, ok := yr.parameters[key]
+func (yr *YubiResponse) GetResultParameter(key string) (value string) {
+	value, ok := yr.resultParameters[key]
 	if !ok {
 		value = ""
 	}

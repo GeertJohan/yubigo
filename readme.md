@@ -52,8 +52,9 @@ if err != nil {
 if ok {
 	// succes!! The OTP is valid!
 	// lets get some data from the result
-	sessioncounter := result.GetParameter("sessioncounter")
+	sessioncounter := result.GetResultParameter("sessioncounter")
 	log.Printf("This was the  %sth time the Yubikey was pluggin into a computer.\n", sessioncounter)
+	log.Printf("Used query was: %s\n", result.GetRequestQuery()) // this query string includes the url of the api-server that responded first.
 } else {
 	// fail! The OTP is invalid or has been used before.
 	log.Println("The given OTP is invalid!!!")
