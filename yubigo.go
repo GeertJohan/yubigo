@@ -358,9 +358,15 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			continue
 		}
 
+		//++ TODO(GeertJohan): if result == REPLAYED_REQUEST, then continue the loop.
+		// See: http://forum.yubico.com/viewtopic.php?f=3&t=701
+
 		// no error? Then lets use the result we have!
 		break
 	}
+
+	//++ TODO(GeertJohan): Close the resultChan?
+	//++ TODO(GeertJohan): Have workers handle a closed resultchan?
 
 	// parse the response
 	bodyReader := bufio.NewReader(result.response.Body)
