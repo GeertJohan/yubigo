@@ -150,7 +150,15 @@ func (vw *verifyWorker) process() {
 // Create a yubiAuth instance with given API-id and API-key.
 // Returns an error when the key could not be base64 decoded.
 // To use yubigo with the Yubico Web Service (default api servers), create an API id+key here: https://upgrade.yubico.com/getapikey/
-func NewYubiAuth(id string, key string, debug bool) (auth *YubiAuth, err error) {
+// Debugging is disabled. For debugging: use NewYubiAuthDebug(..)
+func NewYubiAuth(id string, key string) (auth *YubiAuth, err error) {
+	return NewYubiAuthDebug(id, key, false)
+}
+
+// Create a yubiAuth instance with given API-id and API-key and debug boolean.
+// Returns an error when the key could not be base64 decoded.
+// To use yubigo with the Yubico Web Service (default api servers), create an API id+key here: https://upgrade.yubico.com/getapikey/
+func NewYubiAuthDebug(id string, key string, debug bool) (auth *YubiAuth, err error) {
 	keyBytes, err := base64.StdEncoding.DecodeString(key)
 	if err != nil {
 		err = fmt.Errorf("Given key seems to be invalid. Could not base64_decode. Error: %s\n", err)
@@ -176,6 +184,7 @@ func NewYubiAuth(id string, key string, debug bool) (auth *YubiAuth, err error) 
 	return
 }
 
+// Stops existing workers and creates new ones.
 func (ya *YubiAuth) buildWorkers() {
 	// Unexported (internal) method, so no locking.
 
@@ -264,11 +273,6 @@ func (ya *YubiAuth) HttpsVerifyCertificate(verifyCertificate bool) {
 
 	// rebuild workers (client has to be changed)
 	ya.buildWorkers()
-}
-
-// Enable or disable debug messages
-func (ya *YubiAuth) SetDebug(debug bool) {
-	ya.debug = debug
 }
 
 // The verify method calls the API with given OTP and returns if the OTP is valid or not.
