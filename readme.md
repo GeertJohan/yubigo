@@ -3,17 +3,6 @@
 
 Yubigo is a Yubikey client API library that provides an easy way to integrate the Yubico Yubikey into your existing Go-based user authentication infrastructure.
 
-### Status and Roadmap
-
-This package is very young and lacks automated tests and documentation. Development is high.
-
-At this moment there is **no guarantee** regarding the stability of this package. Although this package is already being used in a production environment.
-Everything is subject to change.
-
-Development is co-ordinated via this github repository. If you made an improvement, please request for pull!
-
-This project is licensed under a Simplified BSD license. Please read the [LICENSE file][license].
-
 #### Todo
  - Test files
  - More documentation
@@ -24,11 +13,9 @@ This project is licensed under a Simplified BSD license. Please read the [LICENS
 Installation is simple. Use go get:
 `go get github.com/GeertJohan/yubigo`
 
-This github repository has a tag `go1`. `go get` will download the revision on that tag. The revision at the `go1` tag is the latest stable revision available.
-
 ### Usage
 
-Make sure to import the package: `import "github.com/GeertJohan/yubigo"`
+Make sure to import the library: `import "github.com/GeertJohan/yubigo"`
 
 For use with the default Yubico servers, make sure you have an API key. [Request a key][getapikey].
 
@@ -42,7 +29,7 @@ if err != nil {
 	log.Fatalln(err)
 }
 
-// verify an OTP value
+// verify an OTP string
 result, ok, err := yubiAuth.Verify("ccccccbetgjevivbklihljgtbenbfrefccveiglnjfbc")
 if err != nil {
 	log.Fatalln(err)
@@ -50,9 +37,6 @@ if err != nil {
 
 if ok {
 	// succes!! The OTP is valid!
-	// lets get some data from the result
-	sessioncounter := result.GetResultParameter("sessioncounter")
-	log.Printf("This was the  %sth time the Yubikey was pluggin into a computer.\n", sessioncounter)
 	log.Printf("Used query was: %s\n", result.GetRequestQuery()) // this query string includes the url of the api-server that responded first.
 } else {
 	// fail! The OTP is invalid or has been used before.
@@ -82,12 +66,16 @@ yubiAuth.UseHttps(false)
 yubiAuth.SetApiServerList("api0.server.com/api/verify", "api1.server.com/api/verify", "otherserver.com/api/verify")
 ```
 
+## Licence
+
+This project is licensed under a Simplified BSD license. Please read the [LICENSE file][license].
+
 
 ### Extra information
 
-This project is implementing a pure-Go Yubico OTP Validation Client following the [Validation Protocol Version 2.0][validationProtocolV20].
+This project is implementing a pure-Go Yubico OTP Validation Client and is following the [Yubico Validation Protocol Version 2.0][validationProtocolV20].
 
-[Package contents documentation at go.pkgdoc.org][pkgdoc]
+[Package documentation at go.pkgdoc.org][pkgdoc]
 
 
  [license]: https://github.com/GeertJohan/yubigo/blob/master/LICENSE
