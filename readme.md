@@ -43,7 +43,7 @@ if ok {
 **Do not verify HTTPS certificate:**
 ```go
 // Disable HTTPS cert verification. Use true to enable again.
-yubiAuth.VerifyHttps(false)
+yubiAuth.HttpsVerifyCertificate(false)
 ```
 
 
