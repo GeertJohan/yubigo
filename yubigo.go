@@ -30,7 +30,9 @@ var (
 	signatureUrlFix = regexp.MustCompile(`\+`)
 )
 
-// Parse input string into yubikey prefix, ciphertext
+// Parse and verify the given OTP string into prefix (identity) and ciphertext.
+// Function returns a non-nil error when given OTP is not in valid format.
+// NOTE: This function does NOT verify if the OTP is correct and unused/unique.
 func ParseOTP(otp string) (prefix string, ciphertext string, err error) {
 	if len(otp) < 32 || len(otp) > 48 {
 		err = errors.New("OTP has wrong length.")
