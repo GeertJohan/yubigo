@@ -62,13 +62,16 @@ type YubiAuth struct {
 	verifyCertificate bool
 	workers           []*verifyWorker
 	use               sync.Mutex
+	debug             bool
 }
 
 type verifyWorker struct {
-	client    *http.Client
-	apiServer string
-	work      chan *workRequest
-	stop      chan bool
+	ya        *YubiAuth         // YubiAuth this worker belongs to
+	id        int               // Worker id
+	client    *http.Client      // http client standing by ready for work
+	apiServer string            // API server URL
+	work      chan *workRequest // Channel on which the worker receives work
+	stop      chan bool         // Channel for stop signal
 }
 
 type workRequest struct {
@@ -83,13 +86,19 @@ type workResult struct {
 }
 
 func (vw *verifyWorker) process() {
-	log.Println("Started worker...")
+	if vw.ya.debug {
+		log.Printf("worker[%d]: Started.\n", vw.id)
+	}
 	for {
 		select {
 		case w := <-vw.work:
-			log.Println("Have work.")
+
 			// Create url
-			url := vw.apiServer + *w.paramString
+			url := vw.ya.protocol + vw.apiServer + *w.paramString
+
+			if vw.ya.debug {
+				log.Printf("worker[%d]: Have work. Requesting: %s\n", vw.id, url)
+			}
 
 			// Create request
 			request, err := http.NewRequest("GET", url, nil)
@@ -97,7 +106,7 @@ func (vw *verifyWorker) process() {
 				w.resultChan <- &workResult{
 					response:     nil,
 					requestQuery: url,
-					err:          errors.New(fmt.Sprintf("Could not create http request. Error: %s\n", err)),
+					err:          fmt.Errorf("Could not create http request. Error: %s\n", err),
 				}
 				continue
 			}
@@ -111,12 +120,18 @@ func (vw *verifyWorker) process() {
 				w.resultChan <- &workResult{
 					response:     nil,
 					requestQuery: url,
-					err:          errors.New(fmt.Sprintf("Fail in client: %s\n", err)),
+					err:          fmt.Errorf("Http client error: %s\n", err),
+				}
+				if vw.ya.debug {
+					log.Printf("worker[%d]: Http client error: %s", vw.id, err)
 				}
 				continue
 			}
 
 			// It seems everything is ok! return the response (wrapped) on the channel.
+			if vw.ya.debug {
+				log.Printf("worker[%d] Received result from api server. Sending on channel.", vw.id)
+			}
 			w.resultChan <- &workResult{
 				response:     response,
 				requestQuery: url,
@@ -124,6 +139,9 @@ func (vw *verifyWorker) process() {
 			}
 			continue
 		case <-vw.stop:
+			if vw.ya.debug {
+				log.Printf("worker[%d]: received stop signal.\n", vw.id)
+			}
 			return
 		}
 	}
@@ -131,10 +149,11 @@ func (vw *verifyWorker) process() {
 
 // Create a yubiAuth instance with given API-id and API-key.
 // Returns an error when the key could not be base64 decoded.
-func NewYubiAuth(id string, key string) (auth *YubiAuth, err error) {
+// To use yubigo with the Yubico Web Service (default api servers), create an API id+key here: https://upgrade.yubico.com/getapikey/
+func NewYubiAuth(id string, key string, debug bool) (auth *YubiAuth, err error) {
 	keyBytes, err := base64.StdEncoding.DecodeString(key)
 	if err != nil {
-		err = errors.New(fmt.Sprintf("Given key seems to be invalid. Could not base64_decode. Error: %s\n", err))
+		err = fmt.Errorf("Given key seems to be invalid. Could not base64_decode. Error: %s\n", err)
 		return
 	}
 
@@ -150,6 +169,8 @@ func NewYubiAuth(id string, key string) (auth *YubiAuth, err error) {
 
 		protocol:          "https://",
 		verifyCertificate: true,
+
+		debug: debug,
 	}
 	auth.buildWorkers()
 	return
@@ -173,15 +194,17 @@ func (ya *YubiAuth) buildWorkers() {
 	ya.workers = make([]*verifyWorker, 0, len(ya.apiServerList))
 
 	// start new workers. One for each apiServerString
-	for _, apiServer := range ya.apiServerList {
+	for id, apiServer := range ya.apiServerList {
 		// create worker instance with new http.Client instance
 		worker := &verifyWorker{
+			ya: ya,
+			id: id,
 			client: &http.Client{
 				Transport: &http.Transport{
 					TLSClientConfig: tlsConfig,
 				},
 			},
-			apiServer: ya.protocol + apiServer + "?",
+			apiServer: apiServer + "?",
 			work:      make(chan *workRequest),
 			stop:      make(chan bool),
 		}
@@ -201,10 +224,10 @@ func (ya *YubiAuth) SetApiServerList(urls ...string) {
 	ya.use.Lock()
 	defer ya.use.Unlock()
 
-	// change setting
+	// save setting
 	ya.apiServerList = urls
 
-	// rebuild workers
+	// rebuild workers (api server url's have changed)
 	ya.buildWorkers()
 }
 
@@ -226,8 +249,7 @@ func (ya *YubiAuth) UseHttps(useHttps bool) {
 		ya.protocol = "http://"
 	}
 
-	// rebuild workers
-	ya.buildWorkers()
+	// no need to rebuild workers, they re-read ya.protocol on each request.
 }
 
 // Enable or disable https certificate verification
@@ -237,11 +259,16 @@ func (ya *YubiAuth) HttpsVerifyCertificate(verifyCertificate bool) {
 	ya.use.Lock()
 	defer ya.use.Unlock()
 
-	// change setting
+	// save setting
 	ya.verifyCertificate = verifyCertificate
 
-	// rebuild workers
+	// rebuild workers (client has to be changed)
 	ya.buildWorkers()
+}
+
+// Enable or disable debug messages
+func (ya *YubiAuth) SetDebug(debug bool) {
+	ya.debug = debug
 }
 
 // The verify method calls the API with given OTP and returns if the OTP is valid or not.
@@ -298,7 +325,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		hmacenc := hmac.New(sha1.New, ya.key)
 		_, err := hmacenc.Write([]byte(paramString))
 		if err != nil {
-			return nil, false, errors.New(fmt.Sprintf("Could not calculate signature. Error: %s\n", err))
+			return nil, false, fmt.Errorf("Could not calculate signature. Error: %s\n", err)
 		}
 		signature := base64.StdEncoding.EncodeToString(hmacenc.Sum([]byte{}))
 		signature = signatureUrlFix.ReplaceAllString(signature, `%2B`)
@@ -335,8 +362,10 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			// increment error counter
 			errCount++
 
-			// development logging
-			log.Printf("A server (%s) gave error back: %s\n", result.requestQuery, result.err)
+			if ya.debug {
+				// debug logging
+				log.Printf("A server (%s) gave error back: %s\n", result.requestQuery, result.err)
+			}
 
 			if errCount == len(ya.apiServerList) {
 				// All workers are done, there's nothing left to try. we return an error.
@@ -363,8 +392,10 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			// increment error counter
 			errCount++
 
-			// development logging
-			log.Println("Got replayed request: ", result.response.Body)
+			if ya.debug {
+				// debug logging
+				log.Println("Got replayed request: ", result.response.Body)
+			}
 
 			if errCount == len(ya.apiServerList) {
 				// All workers are done, there' is nothing left to try. We return an error.
@@ -401,7 +432,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			panic("Unexpected. This status should've been catched in the worker response loop.")
 			return yr, false, errors.New("The api server has seen this unique request before. If you receive this error, you might be the victim of a man-in-the-middle attack.")
 		default:
-			return yr, false, errors.New(fmt.Sprintf("Unknown status parameter (%s) sent by api server.", status))
+			return yr, false, fmt.Errorf("Unknown status parameter (%s) sent by api server.", status)
 		}
 	}
 
@@ -436,7 +467,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		hmacenc := hmac.New(sha1.New, ya.key)
 		_, err := hmacenc.Write([]byte(receivedValuesString))
 		if err != nil {
-			return nil, false, errors.New(fmt.Sprintf("Could not calculate signature replica. Error: %s\n", err))
+			return nil, false, fmt.Errorf("Could not calculate signature replica. Error: %s\n", err)
 		}
 		recievedSignatureReplica := base64.StdEncoding.EncodeToString(hmacenc.Sum([]byte{}))
 
@@ -466,14 +497,13 @@ func newYubiResponse(result *workResult) (*YubiResponse, error) {
 	for {
 		// read through the response lines
 		line, err := bodyReader.ReadString('\n')
-		fmt.Println(line)
 
 		// handle error, which at one point should be an expected io.EOF (end of file)
 		if err != nil {
 			if err == io.EOF {
 				break // successfully done with reading lines, lets break this for loop
 			}
-			return nil, errors.New(fmt.Sprintf("Could not read result body from the server. Error: %s\n", err))
+			return nil, fmt.Errorf("Could not read result body from the server. Error: %s\n", err)
 		}
 
 		// parse result lines, split on first '=', trim \n and \r

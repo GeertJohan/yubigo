@@ -15,10 +15,9 @@ Development is co-ordinated via this github repository. If you made an improveme
 This project is licensed under a Simplified BSD license. Please read the [LICENSE file][license].
 
 #### Todo
- - parallel connection
- - removing the usage of a map in Verify()
- - test files
- - more documentation
+ - Test files
+ - More documentation
+ - Getters/Setters for some options on the YubiAuth object.
 
 ### Installation
 
