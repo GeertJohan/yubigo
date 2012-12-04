@@ -88,10 +88,10 @@ func (vw *verifyWorker) process() {
 		select {
 		case w := <-vw.work:
 			log.Println("Have work.")
-			// create url
+			// Create url
 			url := vw.apiServer + *w.paramString
 
-			// create request
+			// Create request
 			request, err := http.NewRequest("GET", url, nil)
 			if err != nil {
 				w.resultChan <- &workResult{
@@ -103,10 +103,10 @@ func (vw *verifyWorker) process() {
 			}
 			request.Header.Add("User-Agent", "github.com/GeertJohan/yubigo")
 
-			// call server
+			// Call server
 			response, err := vw.client.Do(request)
 
-			// if we received an error from the client, return that (wrapped) on the channel.
+			// If we received an error from the client, return that (wrapped) on the channel.
 			if err != nil {
 				w.resultChan <- &workResult{
 					response:     nil,
@@ -116,20 +116,7 @@ func (vw *verifyWorker) process() {
 				continue
 			}
 
-			// development print body
-			bodyReader := bufio.NewReader(response.Body)
-			log.Printf("Result from server %s : \n", vw.apiServer)
-			fmt.Printf("Request was: %s\n", *w.paramString)
-			for {
-				line, err := bodyReader.ReadString('\n')
-				if err != nil {
-					break
-				}
-				fmt.Print(line)
-			}
-			fmt.Println("-----\n")
-
-			// it seems everything is ok! return the response (wrapped) on the channel.
+			// It seems everything is ok! return the response (wrapped) on the channel.
 			w.resultChan <- &workResult{
 				response:     response,
 				requestQuery: url,
@@ -164,11 +151,12 @@ func NewYubiAuth(id string, key string) (auth *YubiAuth, err error) {
 		protocol:          "https://",
 		verifyCertificate: true,
 	}
-	auth.buildHttpClients()
+	auth.buildWorkers()
 	return
 }
 
-func (ya *YubiAuth) buildHttpClients() {
+func (ya *YubiAuth) buildWorkers() {
+	// Unexported (internal) method, so no locking.
 
 	// create tls config
 	tlsConfig := &tls.Config{}
@@ -207,17 +195,17 @@ func (ya *YubiAuth) buildHttpClients() {
 
 // Use this method to specify a list of servers for verification.
 // Each server string should contain host + path. 
-// Example: "api.yubico.com/wsapi/verify".
-func (ya *YubiAuth) SetApiServerList(url ...string) {
+// Example: "api.yubico.com/wsapi/2.0/verify".
+func (ya *YubiAuth) SetApiServerList(urls ...string) {
 	// Lock
 	ya.use.Lock()
 	defer ya.use.Unlock()
 
 	// change setting
-	ya.apiServerList = url
+	ya.apiServerList = urls
 
 	// rebuild workers
-	ya.buildHttpClients()
+	ya.buildWorkers()
 }
 
 // Retrieve the the ist of servers that are being used for verification.
@@ -239,7 +227,7 @@ func (ya *YubiAuth) UseHttps(useHttps bool) {
 	}
 
 	// rebuild workers
-	ya.buildHttpClients()
+	ya.buildWorkers()
 }
 
 // Enable or disable https certificate verification
@@ -253,7 +241,7 @@ func (ya *YubiAuth) HttpsVerifyCertificate(verifyCertificate bool) {
 	ya.verifyCertificate = verifyCertificate
 
 	// rebuild workers
-	ya.buildHttpClients()
+	ya.buildWorkers()
 }
 
 // The verify method calls the API with given OTP and returns if the OTP is valid or not.
@@ -291,10 +279,11 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 	nonce := string(k)
 	paramSlice = append(paramSlice, "nonce="+nonce)
 
-	// these settings are hardcoded in the library for now.
+	// These settings are hardcoded in the library for now.
 	//++ TODO(GeertJohan): add these values to the yubiAuth object and create getters/setters
 	// paramSlice = append(paramSlice, "timestamp=1")
-	// paramSlice = append(paramSlice, "sl=secure")
+	paramSlice = append(paramSlice, "sl=secure")
+
 	//++ TODO(GeertJohan): Add timeout support?
 	//++ //paramSlice = append(paramSlice, "timeout=")
 
@@ -316,7 +305,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		paramString = paramString + "&h=" + signature
 	}
 
-	// create result channel, buffer is same size as amount of workers
+	// create result channel, buffersize equals the amount of workers.
 	resultChan := make(chan *workResult, len(ya.workers))
 
 	// create workRequest instance
@@ -349,47 +338,45 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			// development logging
 			log.Printf("A server (%s) gave error back: %s\n", result.requestQuery, result.err)
 
-			// all workers are done, there's nothing left to try. we return an error.
 			if errCount == len(ya.apiServerList) {
+				// All workers are done, there's nothing left to try. we return an error.
 				return nil, false, errors.New("None of the servers responded properly.")
 			}
 
-			// we have an error, but not all workers responded yet, so lets try the next result.
+			// we have an error, but not all workers responded yet, so lets wait for the next result.
 			continue
 		}
 
-		//++ TODO(GeertJohan): if result == REPLAYED_REQUEST, then continue the loop.
-		// See: http://forum.yubico.com/viewtopic.php?f=3&t=701
-
-		// no error? Then lets use the result we have!
-		break
-	}
-
-	//++ TODO(GeertJohan): Close the resultChan?
-	//++ TODO(GeertJohan): Have workers handle a closed resultchan?
-
-	// parse the response
-	bodyReader := bufio.NewReader(result.response.Body)
-	yr = &YubiResponse{}
-	yr.resultParameters = make(map[string]string)
-	yr.requestQuery = result.requestQuery
-	for {
-		// read through the response lines
-		line, err := bodyReader.ReadString('\n')
-
-		// handle error, which at one point should be an expected io.EOF (end of file)
+		// create a yubiResult from the workers response.
+		yr, err = newYubiResponse(result)
 		if err != nil {
-			if err == io.EOF {
-				break // successfully done with reading lines, lets break this for loop
-			}
-			return nil, false, errors.New(fmt.Sprintf("Could not read result body from the server. Error: %s\n", err))
+			return nil, false, err
 		}
 
-		// parse result lines, split on first '=', trim \n and \r
-		keyvalue := strings.SplitN(line, "=", 2)
-		if len(keyvalue) == 2 {
-			yr.resultParameters[keyvalue[0]] = strings.Trim(keyvalue[1], "\n\r")
+		// Check for "REPLAYED_REQUEST" result.
+		if status, _ := yr.resultParameters["status"]; status == "REPLAYED_REQUEST" {
+			// The result status is "REPLAYED_REQUEST".
+			// This means that the server for this request got sync with an other server before our request.
+			// Lets wait for the result from the other server.
+			// See: http://forum.yubico.com/viewtopic.php?f=3&t=701
+
+			// increment error counter
+			errCount++
+
+			// development logging
+			log.Println("Got replayed request: ", result.response.Body)
+
+			if errCount == len(ya.apiServerList) {
+				// All workers are done, there' is nothing left to try. We return an error.
+				return nil, false, errors.New("None of the servers responded properly.")
+			}
+
+			// We have a replayed request, but not all workers responded yet, so lets wait for the next result.
+			continue
 		}
+
+		// No error or REPLAYED_REQUEST. Seems like we have a proper result.
+		break
 	}
 
 	// check status
@@ -411,6 +398,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		case "NOT_ENOUGH_ANSWERS":
 			return yr, false, errors.New("The api server could not get requested number of syncs during before timeout")
 		case "REPLAYED_REQUEST":
+			panic("Unexpected. This status should've been catched in the worker response loop.")
 			return yr, false, errors.New("The api server has seen this unique request before. If you receive this error, you might be the victim of a man-in-the-middle attack.")
 		default:
 			return yr, false, errors.New(fmt.Sprintf("Unknown status parameter (%s) sent by api server.", status))
@@ -468,6 +456,33 @@ type YubiResponse struct {
 	requestQuery     string            //++ rename to requestQuery
 	resultParameters map[string]string //++ rename to resultParameters
 	validOTP         bool              //++ rename to validOTP
+}
+
+func newYubiResponse(result *workResult) (*YubiResponse, error) {
+	bodyReader := bufio.NewReader(result.response.Body)
+	yr := &YubiResponse{}
+	yr.resultParameters = make(map[string]string)
+	yr.requestQuery = result.requestQuery
+	for {
+		// read through the response lines
+		line, err := bodyReader.ReadString('\n')
+		fmt.Println(line)
+
+		// handle error, which at one point should be an expected io.EOF (end of file)
+		if err != nil {
+			if err == io.EOF {
+				break // successfully done with reading lines, lets break this for loop
+			}
+			return nil, errors.New(fmt.Sprintf("Could not read result body from the server. Error: %s\n", err))
+		}
+
+		// parse result lines, split on first '=', trim \n and \r
+		keyvalue := strings.SplitN(line, "=", 2)
+		if len(keyvalue) == 2 {
+			yr.resultParameters[keyvalue[0]] = strings.Trim(keyvalue[1], "\n\r")
+		}
+	}
+	return yr, nil
 }
 
 // Returns wether the verification was successful
