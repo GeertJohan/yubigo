@@ -157,7 +157,8 @@ func NewYubiAuth(id string, key string) (auth *YubiAuth, err error) {
 	return NewYubiAuthDebug(id, key, false)
 }
 
-// Create a yubiAuth instance with given API-id and API-key and debug boolean.
+// Create a yubiAuth instance for given API-id and API-key.
+// Has third parameter `debug`. When debug is true this YubiAuth instance will spam the console with logging messages.
 // Returns an error when the key could not be base64 decoded.
 // To use yubigo with the Yubico Web Service (default api servers), create an API id+key here: https://upgrade.yubico.com/getapikey/
 func NewYubiAuthDebug(id string, key string, debug bool) (auth *YubiAuth, err error) {
@@ -165,6 +166,10 @@ func NewYubiAuthDebug(id string, key string, debug bool) (auth *YubiAuth, err er
 	if err != nil {
 		err = fmt.Errorf("Given key seems to be invalid. Could not base64_decode. Error: %s\n", err)
 		return
+	}
+
+	if debug {
+		log.Printf("NewYubiAuthDebug: Given key is base64 decodable. Creating new YubiAuth instance with api id '%s'.\n", id)
 	}
 
 	auth = &YubiAuth{
@@ -182,7 +187,16 @@ func NewYubiAuthDebug(id string, key string, debug bool) (auth *YubiAuth, err er
 
 		debug: debug,
 	}
+
+	if debug {
+		log.Printf("NewYubiAuthDebug: Using yubico web servers: %#v\n", auth.apiServerList)
+		log.Println("NewYubiAuthDebug: Going to build workers.")
+	}
+
+	// Build workers
 	auth.buildWorkers()
+
+	// All done :)
 	return
 }
 
