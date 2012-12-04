@@ -3,17 +3,12 @@
 
 Yubigo is a Yubikey client API library that provides an easy way to integrate the Yubikey into any Go application.
 
-#### Todo
- - Test files
- - More documentation
- - Getters/Setters for some options on the YubiAuth object.
-
-### Installation
+## Installation
 
 Installation is simple. Use go get:
 `go get github.com/GeertJohan/yubigo`
 
-### Usage
+## Usage
 
 Make sure to import the library: `import "github.com/GeertJohan/yubigo"`
 
@@ -71,11 +66,16 @@ yubiAuth.SetApiServerList("api0.server.com/api/verify", "api1.server.com/api/ver
 This project is licensed under a Simplified BSD license. Please read the [LICENSE file][license].
 
 
-### Extra information
+## Todo
+ - Test files
+ - More documentation
+ - Getters/Setters for some options on the YubiAuth object.
+
+## Protocol & Package documentation
 
 This project is implementing a pure-Go Yubico OTP Validation Client and is following the [Yubico Validation Protocol Version 2.0][validationProtocolV20].
 
-[Package documentation at go.pkgdoc.org][pkgdoc]
+You will find "go doc"-like [package documentation at go.pkgdoc.org][pkgdoc].
 
 
  [license]: https://github.com/GeertJohan/yubigo/blob/master/LICENSE
