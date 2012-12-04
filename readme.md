@@ -1,7 +1,7 @@
 
 ## yubigo
 
-Yubigo is a Yubikey client API library that provides an easy way to integrate the Yubico Yubikey into your existing Go-based user authentication infrastructure.
+Yubigo is a Yubikey client API library that provides an easy way to integrate the Yubikey into any Go application.
 
 #### Todo
  - Test files
