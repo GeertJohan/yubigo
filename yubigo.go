@@ -307,7 +307,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 	}
 
 	// create slice to store parameters for this verification request
-	paramSlice := make([]string, 0) //++ Add initial len/cap
+	paramSlice := make([]string, 0)
 	paramSlice = append(paramSlice, "id="+ya.id)
 	paramSlice = append(paramSlice, "otp="+otp)
 
@@ -504,9 +504,9 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 
 // Contains details about yubikey OTP verification.
 type YubiResponse struct {
-	requestQuery     string            //++ rename to requestQuery
-	resultParameters map[string]string //++ rename to resultParameters
-	validOTP         bool              //++ rename to validOTP
+	requestQuery     string
+	resultParameters map[string]string
+	validOTP         bool
 }
 
 func newYubiResponse(result *workResult) (*YubiResponse, error) {
