@@ -30,6 +30,11 @@ var (
 	signatureUrlFix = regexp.MustCompile(`\+`)
 )
 
+// Package variable used to override the http client used for communication 
+// with Yubico. If nil the standard http.Client will be used - if overriding
+// you need to ensure the transport options are set. 
+var HTTPClient *http.Client = nil
+
 // Parse and verify the given OTP string into prefix (identity) and ciphertext.
 // Function returns a non-nil error when given OTP is not in valid format.
 // NOTE: This function does NOT verify if the OTP is correct and unused/unique.
@@ -224,14 +229,19 @@ func (ya *YubiAuth) buildWorkers() {
 		worker := &verifyWorker{
 			ya: ya,
 			id: id,
-			client: &http.Client{
-				Transport: &http.Transport{
-					TLSClientConfig: tlsConfig,
-				},
-			},
 			apiServer: apiServer + "?",
 			work:      make(chan *workRequest),
 			stop:      make(chan bool),
+		}
+
+		if HTTPClient == nil {
+			worker.client = &http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig: tlsConfig,
+				},
+			}
+		} else {
+			worker.client = HTTPClient
 		}
 
 		ya.workers = append(ya.workers, worker)
