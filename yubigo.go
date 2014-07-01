@@ -466,12 +466,6 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 		}
 	}
 
-	// check otp
-	otpCheck, ok := yr.resultParameters["otp"]
-	if !ok || otp != otpCheck {
-		return nil, false, errors.New("Could not validate otp value from server response.")
-	}
-
 	// check nonce
 	nonceCheck, ok := yr.resultParameters["nonce"]
 	if !ok || nonce != nonceCheck {
