@@ -227,8 +227,8 @@ func (ya *YubiAuth) buildWorkers() {
 	for id, apiServer := range ya.apiServerList {
 		// create worker instance with new http.Client instance
 		worker := &verifyWorker{
-			ya: ya,
-			id: id,
+			ya:        ya,
+			id:        id,
 			apiServer: apiServer + "?",
 			work:      make(chan *workRequest),
 			stop:      make(chan bool),
