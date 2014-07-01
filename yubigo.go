@@ -30,9 +30,9 @@ var (
 	signatureUrlFix = regexp.MustCompile(`\+`)
 )
 
-// Package variable used to override the http client used for communication 
+// Package variable used to override the http client used for communication
 // with Yubico. If nil the standard http.Client will be used - if overriding
-// you need to ensure the transport options are set. 
+// you need to ensure the transport options are set.
 var HTTPClient *http.Client = nil
 
 // Parse and verify the given OTP string into prefix (identity) and ciphertext.
@@ -252,7 +252,7 @@ func (ya *YubiAuth) buildWorkers() {
 }
 
 // Use this method to specify a list of servers for verification.
-// Each server string should contain host + path. 
+// Each server string should contain host + path.
 // Example: "api.yubico.com/wsapi/2.0/verify".
 func (ya *YubiAuth) SetApiServerList(urls ...string) {
 	// Lock
