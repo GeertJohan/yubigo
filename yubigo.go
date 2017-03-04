@@ -417,7 +417,7 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			// The result status is "REPLAYED_REQUEST".
 			// This means that the server for this request got sync with an other server before our request.
 			// Lets wait for the result from the other server.
-			// See: http://forum.yubico.com/viewtopic.php?f=3&t=701
+			// See: https://forum.yubico.com/viewtopic.php?f=3&t=701
 
 			// increment error counter
 			errCount++
