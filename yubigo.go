@@ -2,6 +2,7 @@ package yubigo
 
 import (
 	"bufio"
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"crypto/tls"
@@ -82,6 +83,7 @@ type verifyWorker struct {
 }
 
 type workRequest struct {
+	ctx context.Context
 	paramString *string
 	resultChan  chan *workResult
 }
@@ -117,13 +119,19 @@ func (vw *verifyWorker) process() {
 				}
 				continue
 			}
+
 			request.Header.Add("User-Agent", "github.com/GeertJohan/yubigo")
 
-			// Call server
+			// Call server with cancel context
+			request = request.WithContext(w.ctx)
 			response, err := vw.client.Do(request)
 
 			// If we received an error from the client, return that (wrapped) on the channel.
 			if err != nil {
+				// skip cancellation errors
+				if w.ctx.Err() == context.Canceled {
+					continue
+				}
 				w.resultChan <- &workResult{
 					response:     nil,
 					requestQuery: url,
@@ -365,8 +373,12 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 	// create result channel, buffersize equals the amount of workers.
 	resultChan := make(chan *workResult, len(ya.workers))
 
+	// create a cancel context to cancel http requests while we already have a good result
+	ctx, cancel := context.WithCancel(context.Background())
+
 	// create workRequest instance
 	wr := &workRequest{
+		ctx:ctx,
 		paramString: &paramString,
 		resultChan:  resultChan,
 	}
@@ -435,6 +447,9 @@ func (ya *YubiAuth) Verify(otp string) (yr *YubiResponse, ok bool, err error) {
 			// We have a replayed request, but not all workers responded yet, so lets wait for the next result.
 			continue
 		}
+
+		// we have a result that satisfies us so we can cancel the other clients
+		cancel()
 
 		// No error or REPLAYED_REQUEST. Seems like we have a proper result.
 		break
